@@ -145,12 +145,13 @@ PUT file:///path/to/demos/united-rentals/data/*.csv @RAW_DEV.UNITED_RENTALS.UR_D
 #    04_ur_semantic_layer.sql — FLEET_FINDER + RENTAL_ANALYTICS semantic views
 #    05_ur_governance.sql  — Masking policies, row access policies, tag application
 #    06_ur_streamlit.sql   — Deploy Fleet Finder Streamlit app
+#    07_ur_cicd_environments.sql — CI/CD RBAC, environment databases, promotion workflows
 
 # 4. Upload Streamlit app
 PUT file:///path/to/demos/united-rentals/streamlit/app.py @SEM_DEV.UNITED_RENTALS.UR_STREAMLIT_STAGE OVERWRITE=TRUE;
 ```
 
-### RBAC Access Matrix
+### Business RBAC Access Matrix
 
 | Data Element | Fleet Manager | Regional Dir | Branch Mgr | Corp Analyst | External Partner |
 |-------------|:---:|:---:|:---:|:---:|:---:|
@@ -160,13 +161,45 @@ PUT file:///path/to/demos/united-rentals/streamlit/app.py @SEM_DEV.UNITED_RENTAL
 | Rental pricing | Visible | Visible | Visible | Visible | Hidden |
 | Credit limits | Visible | Hidden | Hidden | Hidden | Hidden |
 
+### CI/CD RBAC — Environment Isolation Matrix
+
+The database-as-a-container pattern replaces account-level isolation with role-scoped grants. Each CI/CD role can ONLY access its target environment:
+
+| CI/CD Role | `*_DEV` | `*_STG` | `*_PROD` | Purpose |
+|-----------|:---:|:---:|:---:|---------|
+| `UR_CICD_DEPLOY_DEV` | ALL DDL | — | — | Pipeline deploys to DEV |
+| `UR_CICD_DEPLOY_STG` | — | ALL DDL | — | Pipeline deploys to STG |
+| `UR_CICD_DEPLOY_PROD` | — | — | ALL DDL | Pipeline deploys to PROD |
+| `UR_CICD_VALIDATOR` | SELECT | SELECT | SELECT | Cross-env validation gates |
+| `UR_CLONE_PROVISIONER` | CREATE DB | — | READ (src) | Team dev clone lifecycle |
+| `UR_PLATFORM_ADMIN` | *(inherits all)* | *(inherits all)* | *(inherits all)* | CI/CD infrastructure admin |
+
+Deploy roles are **siblings, not a hierarchy** — a compromised DEV service account cannot touch PROD.
+
+### CI/CD Pipeline (GitHub Actions)
+
+Two workflows automate the full promotion lifecycle. See [CICD_DEEP_DIVE.md](CICD_DEEP_DIVE.md) for architecture details.
+
+| Workflow | Trigger | Role Used | What It Does |
+|----------|---------|-----------|--------------|
+| `ur-snowflake-cicd.yml` | PR / push to develop / push to main | DEV/STG/PROD deploy roles | Lint → Validate → Deploy → Integration Test |
+| `ur-clone-lifecycle.yml` | Manual dispatch / daily 6 AM CT | `UR_CLONE_PROVISIONER` | Provision team clones, cleanup expired, status report |
+
+Pipeline tools (in `tools/`):
+- **`sf_deploy.py`** — Queries `ENVIRONMENT_REGISTRY` for dynamic target resolution, executes SQL, logs promotions
+- **`sf_validate.py`** — Calls `VALIDATE_PROMOTION` stored procedure, enforces gates
+- **`sf_integration_tests.py`** — Post-deploy verification (smoke + full suites)
+
 ### File Structure
 
 ```
 demos/united-rentals/
 ├── tools/
-│   └── generate_ur_data.py     # Data generator (6 tables, geospatial coords)
-├── data/                        # Generated CSV files (not committed)
+│   ├── generate_ur_data.py       # Data generator (6 tables, geospatial coords)
+│   ├── sf_deploy.py              # CI/CD deploy — ENVIRONMENT_REGISTRY-driven
+│   ├── sf_validate.py            # CI/CD validation — promotion gate checks
+│   └── sf_integration_tests.py   # CI/CD integration tests (smoke + full)
+├── data/                          # Generated CSV files (not committed)
 │   ├── branches.csv
 │   ├── equipment.csv
 │   ├── customers.csv
@@ -174,12 +207,19 @@ demos/united-rentals/
 │   ├── maintenance_records.csv
 │   └── telematics.csv
 ├── sql/
-│   ├── 01_ur_setup.sql          # Schemas, roles, tags
-│   ├── 02_ur_load_data.sql      # Stage + COPY INTO
-│   ├── 03_ur_curated_layer.sql  # Dynamic Tables + GEOGRAPHY
-│   ├── 04_ur_semantic_layer.sql # Semantic views for Cortex Analyst
-│   ├── 05_ur_governance.sql     # Masking + row access policies
-│   └── 06_ur_streamlit.sql      # Deploy Streamlit app
-└── streamlit/
-    └── app.py                   # Fleet Finder + Cortex Analyst app
+│   ├── 01_ur_setup.sql            # Schemas, roles, tags
+│   ├── 02_ur_load_data.sql        # Stage + COPY INTO
+│   ├── 03_ur_curated_layer.sql    # Dynamic Tables + GEOGRAPHY
+│   ├── 04_ur_semantic_layer.sql   # Semantic views for Cortex Analyst
+│   ├── 05_ur_governance.sql       # Masking + row access policies
+│   ├── 06_ur_streamlit.sql        # Deploy Streamlit app
+│   └── 07_ur_cicd_environments.sql # CI/CD RBAC + environment isolation
+├── streamlit/
+│   └── app.py                     # Fleet Finder + Cortex Analyst app
+├── CICD_DEEP_DIVE.md              # Comprehensive CI/CD architecture doc
+└── CICD_RBAC_DIAGRAMS.md          # Mermaid diagrams (8 diagrams)
+
+.github/workflows/
+├── ur-snowflake-cicd.yml          # Main CI/CD pipeline (DEV→STG→PROD)
+└── ur-clone-lifecycle.yml         # Clone provisioning + daily cleanup
 ```
