@@ -45,16 +45,13 @@ CREATE OR REPLACE SEMANTIC VIEW SEM_DEV.UNITED_RENTALS.FLEET_FINDER
     equipment.SERIAL_NUMBER AS serial_number,
     equipment.MAKE AS make,
     equipment.MODEL AS model,
-    equipment.CATEGORY AS category
-        COMMENT 'Equipment category: AERIAL, EARTHMOVING, MATERIAL_HANDLING, GENERAL_TOOLS, POWER_AND_HVAC, TRENCH_SAFETY',
+    equipment.CATEGORY AS category,        -- AERIAL, EARTHMOVING, MATERIAL_HANDLING, GENERAL_TOOLS, POWER_AND_HVAC, TRENCH_SAFETY
     equipment.SUBCATEGORY AS subcategory,
     equipment.DESCRIPTION AS equipment_description,
     equipment.YEAR_MANUFACTURED AS year_manufactured,
-    equipment.STATUS AS status
-        COMMENT 'Equipment status: AVAILABLE, RENTED, MAINTENANCE, TRANSPORT, DECOMMISSIONED',
+    equipment.STATUS AS status,             -- AVAILABLE, RENTED, MAINTENANCE, TRANSPORT, DECOMMISSIONED
     equipment.STATUS_LABEL AS status_label,
-    equipment.CONDITION AS condition
-        COMMENT 'Equipment condition: EXCELLENT, GOOD, FAIR, POOR',
+    equipment.CONDITION AS condition,       -- EXCELLENT, GOOD, FAIR, POOR
     equipment.LATITUDE AS equipment_latitude,
     equipment.LONGITUDE AS equipment_longitude,
     branches.BRANCH_ID AS branch_id,
@@ -64,8 +61,7 @@ CREATE OR REPLACE SEMANTIC VIEW SEM_DEV.UNITED_RENTALS.FLEET_FINDER
     branches.STATE AS branch_state,
     branches.LATITUDE AS branch_latitude,
     branches.LONGITUDE AS branch_longitude,
-    branches.REGION AS region
-        COMMENT 'Geographic region: NORTHEAST, SOUTHEAST, MIDWEST, SOUTHWEST, WEST',
+    branches.REGION AS region,              -- NORTHEAST, SOUTHEAST, MIDWEST, SOUTHWEST, WEST
     branches.DISTRICT AS district,
     branches.MANAGER_NAME AS branch_manager,
     telematics.IS_RUNNING AS is_running,
@@ -76,8 +72,6 @@ CREATE OR REPLACE SEMANTIC VIEW SEM_DEV.UNITED_RENTALS.FLEET_FINDER
   )
   METRICS (
     equipment.equipment_count AS COUNT(equipment.EQUIPMENT_ID),
-    equipment.available_count AS COUNT_IF(equipment.STATUS = 'AVAILABLE', equipment.EQUIPMENT_ID),
-    equipment.rented_count AS COUNT_IF(equipment.STATUS = 'RENTED', equipment.EQUIPMENT_ID),
     equipment.avg_daily_rate AS AVG(equipment.DAILY_RATE),
     equipment.avg_weekly_rate AS AVG(equipment.WEEKLY_RATE),
     equipment.avg_monthly_rate AS AVG(equipment.MONTHLY_RATE),
@@ -85,9 +79,10 @@ CREATE OR REPLACE SEMANTIC VIEW SEM_DEV.UNITED_RENTALS.FLEET_FINDER
     equipment.avg_age_years AS AVG(equipment.ASSET_AGE_YEARS),
     equipment.avg_hour_meter AS AVG(equipment.HOUR_METER_READING),
     telematics.avg_fuel_level AS AVG(telematics.FUEL_LEVEL_PCT),
-    telematics.fault_count AS COUNT(telematics.FAULT_CODE)
+    telematics.fault_count AS COUNT(telematics.FAULT_CODE),
+    branches.branch_count AS COUNT(DISTINCT branches.BRANCH_ID)
   )
-  COMMENT = 'Fleet Finder: Find available equipment by category, location, branch, and status. Supports geospatial proximity searches.'
+  COMMENT = 'Fleet Finder: Find available equipment by category, location, branch, and status. Filter by status dimension to find available units. Supports geospatial proximity searches.'
 ;
 
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -119,33 +114,26 @@ CREATE OR REPLACE SEMANTIC VIEW SEM_DEV.UNITED_RENTALS.RENTAL_ANALYTICS
     rentals.CONTRACT_ID AS contract_id,
     rentals.RENTAL_START_DATE AS rental_start_date,
     rentals.RENTAL_END_DATE AS rental_end_date,
-    rentals.STATUS AS rental_status
-        COMMENT 'Contract status: ACTIVE, COMPLETED, CANCELLED, OVERDUE',
-    rentals.RENTAL_TERM AS rental_term
-        COMMENT 'Billing term: DAILY, WEEKLY, MONTHLY',
+    rentals.STATUS AS rental_status,            -- ACTIVE, COMPLETED, CANCELLED, OVERDUE
+    rentals.RENTAL_TERM AS rental_term,         -- DAILY, WEEKLY, MONTHLY
     rentals.DELIVERY_CITY AS delivery_city,
     rentals.DELIVERY_STATE AS delivery_state,
     rentals.PO_NUMBER AS po_number,
     rentals.SALES_REP AS sales_rep,
-    rentals.REGION AS region
-        COMMENT 'Geographic region: NORTHEAST, SOUTHEAST, MIDWEST, SOUTHWEST, WEST',
+    rentals.REGION AS region,                   -- NORTHEAST, SOUTHEAST, MIDWEST, SOUTHWEST, WEST
     rentals.BRANCH_CITY AS branch_city,
-    rentals.EQUIPMENT_CATEGORY AS equipment_category
-        COMMENT 'Equipment category: AERIAL, EARTHMOVING, MATERIAL_HANDLING, GENERAL_TOOLS, POWER_AND_HVAC, TRENCH_SAFETY',
+    rentals.EQUIPMENT_CATEGORY AS equipment_category, -- AERIAL, EARTHMOVING, MATERIAL_HANDLING, etc.
     rentals.EQUIPMENT_MAKE AS equipment_make,
     rentals.CUSTOMER_NAME AS customer_name,
-    rentals.CUSTOMER_TYPE AS customer_type
-        COMMENT 'Customer type: CONSTRUCTION, INDUSTRIAL, INFRASTRUCTURE, RESIDENTIAL, GOVERNMENT, UTILITY, OIL_AND_GAS, MINING, EVENTS',
+    rentals.CUSTOMER_TYPE AS customer_type,      -- CONSTRUCTION, INDUSTRIAL, INFRASTRUCTURE, etc.
     customers.CREDIT_RATING AS credit_rating,
-    customers.REVENUE_SEGMENT AS revenue_segment
-        COMMENT 'Revenue segment: ENTERPRISE, MID-MARKET, SMB',
+    customers.REVENUE_SEGMENT AS revenue_segment, -- ENTERPRISE, MID-MARKET, SMB
     customers.CITY AS customer_city,
     customers.STATE AS customer_state
   )
   METRICS (
     rentals.total_revenue AS SUM(rentals.TOTAL_AMOUNT),
     rentals.contract_count AS COUNT(rentals.CONTRACT_ID),
-    rentals.active_contracts AS COUNT_IF(rentals.STATUS = 'ACTIVE', rentals.CONTRACT_ID),
     rentals.avg_duration_days AS AVG(rentals.DURATION_DAYS),
     rentals.avg_daily_rate AS AVG(rentals.DAILY_RATE),
     rentals.avg_revenue_per_day AS AVG(rentals.REVENUE_PER_DAY),

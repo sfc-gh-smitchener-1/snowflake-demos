@@ -153,14 +153,16 @@ ALTER TABLE CURATED_DEV.UNITED_RENTALS.FACT_RENTALS MODIFY COLUMN
 ALTER TABLE CURATED_DEV.UNITED_RENTALS.DIM_BRANCH
     ADD ROW ACCESS POLICY CURATED_DEV.UNITED_RENTALS.RAP_UR_REGION ON (REGION);
 
-ALTER TABLE CURATED_DEV.UNITED_RENTALS.DIM_EQUIPMENT
-    ADD ROW ACCESS POLICY CURATED_DEV.UNITED_RENTALS.RAP_UR_REGION ON (
-        (SELECT b.REGION FROM CURATED_DEV.UNITED_RENTALS.DIM_BRANCH b WHERE b.BRANCH_ID = BRANCH_ID)
-    );
-
--- Note: Row access on equipment is handled via the FLEET_AVAILABILITY view
+-- Note: DIM_EQUIPMENT inherits region filtering through FLEET_AVAILABILITY view
 -- which joins to DIM_BRANCH (where the RAP is applied). The join naturally
--- filters equipment to only visible branches.
+-- filters equipment to only visible branches. We also apply the RAP directly
+-- on FACT_RENTALS which carries the REGION column from the branch join.
+
+ALTER TABLE CURATED_DEV.UNITED_RENTALS.FACT_RENTALS
+    ADD ROW ACCESS POLICY CURATED_DEV.UNITED_RENTALS.RAP_UR_REGION ON (REGION);
+
+ALTER TABLE CURATED_DEV.UNITED_RENTALS.FACT_MAINTENANCE
+    ADD ROW ACCESS POLICY CURATED_DEV.UNITED_RENTALS.RAP_UR_REGION ON (REGION);
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- TAG APPLICATION (Snowflake Horizon data classification)
@@ -198,4 +200,75 @@ ALTER TABLE CURATED_DEV.UNITED_RENTALS.FACT_RENTALS MODIFY COLUMN
 ALTER TABLE CURATED_DEV.UNITED_RENTALS.FACT_TELEMATICS_LATEST
     SET TAG GOVERNANCE.TAGS.UR_DATA_DOMAIN = 'TELEMATICS';
 
-SELECT 'Governance complete: 5 masking policies, 1 row access policy, tags applied.' AS STATUS;
+-- ═══════════════════════════════════════════════════════════════════════════
+-- "AND WORLD" RBAC PATTERN
+-- ═══════════════════════════════════════════════════════════════════════════
+-- UR needs RBAC that facilitates an "AND" world:
+--   Shared spaces AND locked-down department spaces AND user-only spaces
+--
+-- This maps to Snowflake's layered security model:
+--   SHARED   = Views/tables granted to all UR roles (fleet availability)
+--   DEPT     = Schema-level grants scoped by department (regional data)
+--   PRIVATE  = Row-access + masking policies for individual user context
+--
+-- The combination of:
+--   1. Role hierarchy (UR_FLEET_MANAGER > UR_REGIONAL_DIRECTOR > UR_BRANCH_MANAGER)
+--   2. Row access policies (region/branch scoping via ROLE_REGION_MAPPING table)
+--   3. Column masking policies (PII and pricing graduated by role)
+-- Creates the AND world: each user sees shared + their department + their own scope.
+
+-- Demonstrate the AND world with a verification query:
+-- Run this as each role to see the graduated access in action.
+
+-- SHARED: All roles see the fleet availability view (with role-appropriate filtering)
+GRANT SELECT ON VIEW CURATED_DEV.UNITED_RENTALS.FLEET_AVAILABILITY TO ROLE UR_FLEET_MANAGER;
+GRANT SELECT ON VIEW CURATED_DEV.UNITED_RENTALS.FLEET_AVAILABILITY TO ROLE UR_EXTERNAL_PARTNER;
+
+-- DEPARTMENT: Regional/branch scoping enforced by row access policies above
+
+-- PRIVATE: Masking policies above enforce per-role column visibility
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- RLS FRAMEWORK VARIANTS (Location, Customer, Geography)
+-- ═══════════════════════════════════════════════════════════════════════════
+-- UR needs different RLS frameworks for different dimensions:
+--   1. Location-based RLS  → RAP_UR_REGION (above) — branch/region scoping
+--   2. Customer-based RLS  → RAP_UR_CUSTOMER (below) — customer visibility
+--   3. Geography-based RLS → Covered by region policy + ST_DISTANCE in app layer
+
+-- Customer-scoped row access: external partners only see their own contracts
+CREATE OR REPLACE ROW ACCESS POLICY CURATED_DEV.UNITED_RENTALS.RAP_UR_CUSTOMER
+    AS (customer_type_val VARCHAR) RETURNS BOOLEAN ->
+    CASE
+        -- Internal roles see all customers
+        WHEN CURRENT_ROLE() IN ('DATA_ADMIN', 'UR_FLEET_MANAGER', 'UR_REGIONAL_DIRECTOR',
+                                 'UR_BRANCH_MANAGER', 'UR_CORPORATE_ANALYST')
+            THEN TRUE
+        -- External partners only see CONSTRUCTION and INFRASTRUCTURE customers (public sector)
+        WHEN CURRENT_ROLE() = 'UR_EXTERNAL_PARTNER'
+            AND customer_type_val IN ('CONSTRUCTION', 'INFRASTRUCTURE', 'GOVERNMENT')
+            THEN TRUE
+        ELSE FALSE
+    END
+    COMMENT = 'Customer-type RLS: external partners see only construction/infrastructure/government';
+
+ALTER TABLE CURATED_DEV.UNITED_RENTALS.DIM_CUSTOMER
+    ADD ROW ACCESS POLICY CURATED_DEV.UNITED_RENTALS.RAP_UR_CUSTOMER ON (CUSTOMER_TYPE);
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- SSO + EXTERNAL ACCESS READINESS
+-- ═══════════════════════════════════════════════════════════════════════════
+-- UR context: Discovery has SSO, EDW accounts do not.
+-- This section demonstrates the governance objects that work identically
+-- whether the user authenticates via SSO (Discovery) or local auth (EDW).
+-- Policies are attached to objects, not users — so the same masking/RLS
+-- works across all accounts once the role hierarchy is replicated.
+--
+-- When UR unifies SSO across accounts, these policies will automatically
+-- enforce the correct access for every user — no policy migration needed.
+--
+-- The ROLE_REGION_MAPPING table is the single source of truth for
+-- role-to-region assignments. Updating one row changes access for
+-- every table that uses RAP_UR_REGION — no per-table edits required.
+
+SELECT 'Governance complete: 5 masking policies, 2 row access policies, AND-world RBAC, tags applied.' AS STATUS;
