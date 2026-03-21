@@ -47,17 +47,18 @@ The single-account architecture with CI/CD RBAC solves all three.
 
 Replace **account boundaries** with **database boundaries + role-scoped grants**.
 
-```
-BEFORE (3 accounts):
-  EDW Prod Account  ←→  EDW Dev Account  ←→  Discovery Account
-  (account wall)         (account wall)        (account wall)
-
-AFTER (1 account, role walls):
-  ┌─ SINGLE ACCOUNT ──────────────────────────────────────────────┐
-  │  *_DEV databases     *_STG databases     *_PROD databases     │
-  │  UR_CICD_DEPLOY_DEV  UR_CICD_DEPLOY_STG  UR_CICD_DEPLOY_PROD │
-  │  (role wall)         (role wall)          (role wall)          │
-  └───────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph BEFORE["BEFORE (3 accounts)"]
+        direction LR
+        PROD_OLD["EDW Prod\nAccount"] ---|"account wall"| DEV_OLD["EDW Dev\nAccount"] ---|"account wall"| DISC_OLD["Discovery\nAccount"]
+    end
+    subgraph AFTER["AFTER (1 account, role walls)"]
+        direction LR
+        DEV_NEW["*_DEV databases\nUR_CICD_DEPLOY_DEV\n(role wall)"]
+        STG_NEW["*_STG databases\nUR_CICD_DEPLOY_STG\n(role wall)"]
+        PROD_NEW["*_PROD databases\nUR_CICD_DEPLOY_PROD\n(role wall)"]
+    end
 ```
 
 The key guarantee: **deploy roles are siblings, not a hierarchy**. `UR_CICD_DEPLOY_DEV` does NOT inherit from `UR_CICD_DEPLOY_PROD`. A compromised DEV service account cannot touch PROD because there is no grant path.
@@ -98,14 +99,14 @@ Each database contains a `UNITED_RENTALS` schema. The DEV databases already exis
 
 ### 2. CI/CD Roles (§2)
 
-```
-DATA_ADMIN
-  ├── UR_PLATFORM_ADMIN              ← Platform team: CI/CD infrastructure
-  │     ├── UR_CICD_DEPLOY_PROD      ← Pipeline → PROD databases ONLY
-  │     ├── UR_CICD_DEPLOY_STG       ← Pipeline → STG databases ONLY
-  │     ├── UR_CICD_DEPLOY_DEV       ← Pipeline → DEV databases ONLY
-  │     └── UR_CICD_VALIDATOR        ← Read-only across ALL environments
-  └── UR_CLONE_PROVISIONER           ← Creates/drops team dev clones
+```mermaid
+graph TD
+    DA["DATA_ADMIN"] --> PA["UR_PLATFORM_ADMIN\nPlatform team: CI/CD infrastructure"]
+    DA --> CP["UR_CLONE_PROVISIONER\nCreates/drops team dev clones"]
+    PA --> DP["UR_CICD_DEPLOY_PROD\nPipeline → PROD databases ONLY"]
+    PA --> DS["UR_CICD_DEPLOY_STG\nPipeline → STG databases ONLY"]
+    PA --> DD["UR_CICD_DEPLOY_DEV\nPipeline → DEV databases ONLY"]
+    PA --> CV["UR_CICD_VALIDATOR\nRead-only across ALL environments"]
 ```
 
 **Critical design**: The three deploy roles are siblings under `UR_PLATFORM_ADMIN`. None inherits from another. This means:
@@ -141,26 +142,17 @@ The validator role gets:
 
 Triggers on changes to `demos/united-rentals/` files:
 
-```
-PR to develop          push to develop          push to main
-     │                       │                        │
-     ▼                       ▼                        ▼
-  ┌──────┐               ┌──────┐                ┌──────┐
-  │ lint │               │ lint │                │ lint │
-  └──┬───┘               └──┬───┘                └──┬───┘
-     ▼                       ▼                        ▼
-  ┌──────────┐           ┌──────────┐            ┌──────────┐
-  │ validate │           │ validate │            │ validate │
-  └──┬───────┘           └──┬───────┘            └──┬───────┘
-     ▼                       ▼                        ▼
-  ┌────────────┐         ┌────────────┐          ┌────────────────────┐
-  │ deploy-dev │         │ deploy-stg │          │ deploy-prod        │
-  │ DEPLOY_DEV │         │ DEPLOY_STG │          │ DEPLOY_PROD        │
-  │ + smoke    │         │ + full     │          │ GitHub Env approval│
-  │   tests    │         │   tests    │          │ + strict validate  │
-  └────────────┘         └────────────┘          │ + full tests       │
-                                                 │ + audit log        │
-                                                 └────────────────────┘
+```mermaid
+flowchart TB
+    subgraph PR["PR to develop"]
+        PR_LINT["lint"] --> PR_VAL["validate"] --> PR_DEV["deploy-dev\nUR_CICD_DEPLOY_DEV\n+ smoke tests"]
+    end
+    subgraph DEVELOP["Push to develop"]
+        DEV_LINT["lint"] --> DEV_VAL["validate"] --> DEV_STG["deploy-stg\nUR_CICD_DEPLOY_STG\n+ full tests"]
+    end
+    subgraph MAIN["Push to main"]
+        MAIN_LINT["lint"] --> MAIN_VAL["validate"] --> MAIN_PROD["deploy-prod\nUR_CICD_DEPLOY_PROD\nGitHub Env approval\n+ strict validate\n+ full tests\n+ audit log"]
+    end
 ```
 
 **Job details:**
@@ -285,50 +277,31 @@ SELECT * FROM GOVERNANCE.CONTRACTS.ENVIRONMENT_REGISTRY;
 
 ### Scenario: Engineer adds a new dimension table
 
+**Step 1-2**: Engineer creates feature branch, adds DIM_FLEET_CATEGORY to curated layer SQL, opens PR to `develop`.
+
+```mermaid
+flowchart LR
+    LINT["lint\nsqlfluff checks\nSQL syntax"] --> VALIDATE["validate\nsf_validate.py\n--target-env DEV\nRole auth ✓\nSource objects ✓\nTarget resolved ✓"]
+    VALIDATE --> DEPLOY["deploy-dev\nsf_deploy.py\n--target-env DEV\nResolves: CURATED → CURATED_DEV\nExecutes as UR_CICD_DEPLOY_DEV"]
+    DEPLOY --> SMOKE["smoke-test\nsf_integration_tests.py\n--suite smoke\nSchema exists ✓\nDIM_FLEET_CATEGORY has rows ✓"]
 ```
-1. Engineer creates feature branch, adds DIM_FLEET_CATEGORY to curated layer SQL
-2. Opens PR to `develop`
 
-   ┌─ GitHub Actions: ur-snowflake-cicd.yml ─────────────────────────────┐
-   │                                                                      │
-   │  [lint] sqlfluff checks SQL syntax                                   │
-   │    ↓                                                                 │
-   │  [validate] sf_validate.py --target-env DEV                          │
-   │    → CALL VALIDATE_PROMOTION('CURATED_DEV', 'DEV', 'UNITED_RENTALS')│
-   │    → Checks: role auth ✓, source objects ✓, target resolved ✓       │
-   │    ↓                                                                 │
-   │  [deploy-dev] sf_deploy.py --action deploy --target-env DEV          │
-   │    → Resolves: CURATED → CURATED_DEV (from ENVIRONMENT_REGISTRY)    │
-   │    → Executes SQL as UR_CICD_DEPLOY_DEV                             │
-   │    ↓                                                                 │
-   │  [smoke-test] sf_integration_tests.py --target-env DEV --suite smoke │
-   │    → Schema exists ✓, DIM_FLEET_CATEGORY has rows ✓                 │
-   │                                                                      │
-   └──────────────────────────────────────────────────────────────────────┘
+**Step 3**: PR approved, merged to `develop`.
 
-3. PR approved, merged to `develop`
+```mermaid
+flowchart LR
+    VAL_STG["validate\nsf_validate.py\n--target-env STG"] --> DEP_STG["deploy-stg\nsf_deploy.py\nResolves: CURATED → CURATED_STG\nExecutes as UR_CICD_DEPLOY_STG"]
+    DEP_STG --> FULL_STG["full-test\nsf_integration_tests.py\n--suite full\nCross-env row count ✓\nWrite blocked ✓"]
+```
 
-   ┌─ GitHub Actions (push to develop) ──────────────────────────────────┐
-   │  [validate] sf_validate.py --target-env STG                         │
-   │  [deploy-stg] sf_deploy.py --action deploy --target-env STG         │
-   │    → Resolves: CURATED → CURATED_STG                                │
-   │    → Executes SQL as UR_CICD_DEPLOY_STG                             │
-   │  [full-test] sf_integration_tests.py --target-env STG --suite full  │
-   │    → Cross-env row count consistency ✓, write blocked ✓             │
-   └─────────────────────────────────────────────────────────────────────┘
+**Step 4**: Release PR from `develop` → `main`, approved by platform team.
 
-4. Release PR from `develop` → `main`, approved by platform team
-
-   ┌─ GitHub Actions (push to main) ─────────────────────────────────────┐
-   │  GitHub Environment "production" → required reviewer approves       │
-   │  [validate] sf_validate.py --target-env PROD --strict               │
-   │  [deploy-prod] sf_deploy.py --action deploy --target-env PROD       │
-   │    → Resolves: CURATED → CURATED_PROD                               │
-   │    → Executes SQL as UR_CICD_DEPLOY_PROD                            │
-   │  [full-test] sf_integration_tests.py --target-env PROD --suite full │
-   │  [audit] sf_deploy.py --action log-promotion --status SUCCESS       │
-   │    → INSERT INTO PROMOTION_LOG (sha, branch, status, ...)           │
-   └─────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart LR
+    APPROVE["GitHub Environment\n'production'\nRequired reviewer approves"] --> VAL_PROD["validate\nsf_validate.py\n--target-env PROD\n--strict"]
+    VAL_PROD --> DEP_PROD["deploy-prod\nsf_deploy.py\nResolves: CURATED → CURATED_PROD\nExecutes as UR_CICD_DEPLOY_PROD"]
+    DEP_PROD --> FULL_PROD["full-test\nsf_integration_tests.py\n--suite full"]
+    FULL_PROD --> AUDIT["audit\nsf_deploy.py\n--action log-promotion\nINSERT INTO PROMOTION_LOG"]
 ```
 
 ### Promotion Methods (via `PROMOTE_OBJECT`)
@@ -345,23 +318,12 @@ SELECT * FROM GOVERNANCE.CONTRACTS.ENVIRONMENT_REGISTRY;
 
 ### How Teams Get Dev Environments
 
-```
-1. Manning team requests a clone:
-   → GitHub Actions: ur-clone-lifecycle.yml (workflow_dispatch)
-   → Inputs: team_name=MANNING, team_role=MANNING_TEAM_ROLE, ttl_days=14
-
-2. Provisioner creates 3 zero-copy clones:
-   → RAW_MANNING_DEV     (clone of RAW_PROD)
-   → CURATED_MANNING_DEV (clone of CURATED_PROD)
-   → SEM_MANNING_DEV     (clone of SEM_PROD)
-
-3. Grants applied:
-   → MANNING_TEAM_ROLE gets ALL on all 3 databases
-   → UR_CICD_DEPLOY_DEV gets ALL (so pipelines work in the clone)
-
-4. Clone registered in CLONE_REGISTRY with TTL=14 days
-
-5. Daily at 6 AM CT: CLEANUP_EXPIRED_CLONES drops anything past TTL
+```mermaid
+flowchart TB
+    REQ["Manning team requests clone\nGitHub Actions: ur-clone-lifecycle.yml\nInputs: team=MANNING, role=MANNING_TEAM_ROLE, ttl=14"] --> PROVISION["Provisioner creates 3 zero-copy clones\nRAW_MANNING_DEV (clone of RAW_PROD)\nCURATED_MANNING_DEV (clone of CURATED_PROD)\nSEM_MANNING_DEV (clone of SEM_PROD)"]
+    PROVISION --> GRANTS["Grants applied\nMANNING_TEAM_ROLE gets ALL on all 3 databases\nUR_CICD_DEPLOY_DEV gets ALL (pipelines work)"]
+    GRANTS --> REGISTER["Clone registered in CLONE_REGISTRY\nTTL = 14 days"]
+    REGISTER --> CLEANUP["Daily at 6 AM CT:\nCLEANUP_EXPIRED_CLONES\ndrops anything past TTL"]
 ```
 
 This replaces UR's current process of manually requesting a Dev account copy — which takes days and produces a full (expensive) duplicate.

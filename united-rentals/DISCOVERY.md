@@ -12,29 +12,22 @@ The primary objective is to **harmonize Discovery and Production** into a unifie
 
 ### Three-Account Topology
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                          CURRENT STATE                                  │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                         │
-│  ACCOUNT 1: EDW PRODUCTION              ACCOUNT 2: EDW DEVELOPMENT      │
-│  ┌─────────────────────────────┐        ┌───────────────────────────┐   │
-│  │  EDW Database (core)        │        │  Mirror of Production     │   │
-│  │  Manning Database           │        │  (Development/Testing)    │   │
-│  │  Sales Ops Database         │        │                           │   │
-│  │                             │        └───────────────────────────┘   │
-│  │  Auth: Local + Service Accts│                                        │
-│  │  ELT:  Wherescape Red       │                                        │
-│  │ Ingest: Precisely → Fivetran│        ACCOUNT 3: DISCOVERY            │
-│  │  Users: Admin/System only   │        ┌───────────────────────────┐   │
-│  └──────────────┬──────────────┘        │  Skunkworks / AI / ML     │   │
-│                 │                       │  Cortex AI experiments    │   │
-│                 │  Data Share           │                           │   │
-│                 └───────────────────────│  Auth: SSO + OAuth        │   │
-│                                         │  Security: Row-Level (RLS)│   │
-│                                         │  Users: Branch employees  │   │
-│                                         └───────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart LR
+    subgraph CURRENT["CURRENT STATE"]
+        subgraph ACCT1["ACCOUNT 1: EDW PRODUCTION"]
+            EDW_DB["EDW Database (core)\nManning Database\nSales Ops Database"]
+            EDW_META["Auth: Local + Service Accts\nELT: Wherescape Red\nIngest: Precisely → Fivetran\nUsers: Admin/System only"]
+        end
+        subgraph ACCT2["ACCOUNT 2: EDW DEVELOPMENT"]
+            DEV_DB["Mirror of Production\n(Development/Testing)"]
+        end
+        subgraph ACCT3["ACCOUNT 3: DISCOVERY"]
+            DISC_DB["Skunkworks / AI / ML\nCortex AI experiments"]
+            DISC_META["Auth: SSO + OAuth\nSecurity: Row-Level (RLS)\nUsers: Branch employees"]
+        end
+    end
+    ACCT1 -->|"Data Share\n(read-only)"| ACCT3
 ```
 
 ### Account Details
@@ -47,22 +40,11 @@ The primary objective is to **harmonize Discovery and Production** into a unifie
 
 ### Data Flow
 
-```
-ERP / Source Systems
-        │
-        │  Fivetran (replacing Precisely)
-        ▼
-┌──────────────────┐     Data Share      ┌──────────────────┐
-│  EDW PRODUCTION  │ ──────────────────► │    DISCOVERY     │
-│  (Source of Truth)│                    │  (Read-only copy)│
-└──────────────────┘                     └──────────────────┘
-        │
-        │  Manual replication
-        ▼
-┌──────────────────┐
-│  EDW DEVELOPMENT │
-│  (Dev/Test mirror)│
-└──────────────────┘
+```mermaid
+flowchart TB
+    SRC["ERP / Source Systems"] -->|"Fivetran\n(replacing Precisely)"| PROD["EDW PRODUCTION\n(Source of Truth)"]
+    PROD -->|"Data Share (read-only)"| DISC["DISCOVERY\n(Read-only copy)"]
+    PROD -->|"Manual replication"| DEV["EDW DEVELOPMENT\n(Dev/Test mirror)"]
 ```
 
 ## Key Challenges — "The Heroics"

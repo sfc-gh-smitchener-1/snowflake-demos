@@ -34,56 +34,41 @@ Each of UR's core challenges maps directly to a DCA pattern demonstrated in the 
 
 ## Current State — Three Account Architecture
 
-```
-┌──────────────────────┐    ┌──────────────────────┐
-│  EDW PRODUCTION      │    │  EDW DEVELOPMENT     │
-│  (To rename:         │    │  (Mirrors Production)│
-│   Snowflake Prod)    │    │                      │
-│                      │    │                      │
-│  ┌─────────────────┐ │    └──────────────────────┘
-│  │ EDW (core)      │ │
-│  │ Manning         │ │    ┌─────────────────────  ─┐
-│  │ Sales Ops       │ │    │  DISCOVERY ACCOUNT     │
-│  └─────────────────┘ │    │  (Skunkworks / AI)     │
-│                      │    │                        │
-│  Auth: Local/Service │    │  Auth: SSO + RLS       │
-│  ELT:  Wherescape Red│    │  AI:   Cortex          │
-│  Ingest: Fivetran    │◄───│  Data: Shared from Prod│
-└──────────────────────┘    └────────────────────  ──┘
-        │
-        │  Precisely → Fivetran migration in progress
-        ▼
-    ERP / Source Systems
+```mermaid
+flowchart LR
+    subgraph PROD["EDW PRODUCTION\n(To rename: Snowflake Prod)"]
+        PROD_DB["EDW (core)\nManning\nSales Ops"]
+        PROD_META["Auth: Local/Service\nELT: Wherescape Red\nIngest: Fivetran"]
+    end
+    subgraph DEV["EDW DEVELOPMENT\n(Mirrors Production)"]
+        DEV_DB["Dev mirror"]
+    end
+    subgraph DISC["DISCOVERY ACCOUNT\n(Skunkworks / AI)"]
+        DISC_DB["Auth: SSO + RLS\nAI: Cortex\nData: Shared from Prod"]
+    end
+    PROD -->|"Data Share"| DISC
+    SRC["ERP / Source Systems"] -->|"Precisely → Fivetran\nmigration in progress"| PROD
 ```
 
 ## Target State — Federated Data Product Factory
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    UNIFIED IDENTITY PLANE (SSO/MFA)             │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  ┌───────────────────────────────────────────────────────────┐  │
-│  │              PRIMARY HUB (Container-by-DB)                │  │
-│  │                                                           │  │
-│  │  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌───────────────┐    │  │
-│  │  │  EDW    │ │ Manning │ │Sales Ops│ │ Cortex AI     │    │  │
-│  │  │ RAW→    │ │ RAW→    │ │ RAW→    │ │ Models +      │    │  │
-│  │  │ CURATED→│ │ CURATED→│ │ CURATED→│ │ Feature Store │    │  │
-│  │  │ SEMANTIC│ │ SEMANTIC│ │ SEMANTIC│ │               │    │  │
-│  │  └─────────┘ └─────────┘ └─────────┘ └───────────────┘    │  │
-│  └───────────────────────────┬───────────────────────────────┘  │
-│                              │ Internal Marketplace             │
-│  ┌───────────────────────────▼───────────────────────────────┐  │
-│  │            UR PRIVATE DATA EXCHANGE                       │  │
-│  │  Fleet ◄──► Telematics ◄──► Maintenance ◄──► Finance      │  │
-│  └───────────────────────────────────────────────────────────┘  │
-│                              │                                  │
-│  ┌───────────────────────────▼───────────────────────────────┐  │
-│  │        SNOWFLAKE HORIZON (Unified Governance)             │  │
-│  │  Tags │ Masking │ Row Access │ Lineage │ Catalog          │  │
-│  └───────────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph UNIFIED["UNIFIED IDENTITY PLANE (SSO/MFA)"]
+        subgraph HUB["PRIMARY HUB (Container-by-DB)"]
+            EDW["EDW\nRAW →\nCURATED →\nSEMANTIC"]
+            MANNING["Manning\nRAW →\nCURATED →\nSEMANTIC"]
+            SOPS["Sales Ops\nRAW →\nCURATED →\nSEMANTIC"]
+            CORTEX["Cortex AI\nModels +\nFeature Store"]
+        end
+        subgraph EXCHANGE["UR PRIVATE DATA EXCHANGE"]
+            DOMAINS["Fleet | Telematics | Maintenance | Finance"]
+        end
+        subgraph HORIZON["SNOWFLAKE HORIZON (Unified Governance)"]
+            POLICIES["Tags | Masking | Row Access | Lineage | Catalog"]
+        end
+    end
+    HUB -->|"Internal Marketplace"| EXCHANGE
 ```
 
 ## Engagement Timeline
@@ -192,34 +177,33 @@ Pipeline tools (in `tools/`):
 
 ### File Structure
 
-```
-demos/united-rentals/
-├── tools/
-│   ├── generate_ur_data.py       # Data generator (6 tables, geospatial coords)
-│   ├── sf_deploy.py              # CI/CD deploy — ENVIRONMENT_REGISTRY-driven
-│   ├── sf_validate.py            # CI/CD validation — promotion gate checks
-│   └── sf_integration_tests.py   # CI/CD integration tests (smoke + full)
-├── data/                          # Generated CSV files (not committed)
-│   ├── branches.csv
-│   ├── equipment.csv
-│   ├── customers.csv
-│   ├── rental_contracts.csv
-│   ├── maintenance_records.csv
-│   └── telematics.csv
-├── sql/
-│   ├── 01_ur_setup.sql            # Schemas, roles, tags
-│   ├── 02_ur_load_data.sql        # Stage + COPY INTO
-│   ├── 03_ur_curated_layer.sql    # Dynamic Tables + GEOGRAPHY
-│   ├── 04_ur_semantic_layer.sql   # Semantic views for Cortex Analyst
-│   ├── 05_ur_governance.sql       # Masking + row access policies
-│   ├── 06_ur_streamlit.sql        # Deploy Streamlit app
-│   └── 07_ur_cicd_environments.sql # CI/CD RBAC + environment isolation
-├── streamlit/
-│   └── app.py                     # Fleet Finder + Cortex Analyst app
-├── CICD_DEEP_DIVE.md              # Comprehensive CI/CD architecture doc
-└── CICD_RBAC_DIAGRAMS.md          # Mermaid diagrams (8 diagrams)
+```mermaid
+graph LR
+    ROOT["demos/united-rentals/"]
+    ROOT --> TOOLS["tools/"]
+    TOOLS --> GEN["generate_ur_data.py"]
+    TOOLS --> DEPLOY["sf_deploy.py"]
+    TOOLS --> VALIDATE["sf_validate.py"]
+    TOOLS --> INTTEST["sf_integration_tests.py"]
 
-.github/workflows/
-├── ur-snowflake-cicd.yml          # Main CI/CD pipeline (DEV→STG→PROD)
-└── ur-clone-lifecycle.yml         # Clone provisioning + daily cleanup
+    ROOT --> DATA["data/ (generated CSVs)"]
+    DATA --> CSV["branches.csv\nequipment.csv\ncustomers.csv\nrental_contracts.csv\nmaintenance_records.csv\ntelematics.csv"]
+
+    ROOT --> SQL["sql/"]
+    SQL --> S1["01_ur_setup.sql"]
+    SQL --> S2["02_ur_load_data.sql"]
+    SQL --> S3["03_ur_curated_layer.sql"]
+    SQL --> S4["04_ur_semantic_layer.sql"]
+    SQL --> S5["05_ur_governance.sql"]
+    SQL --> S6["06_ur_streamlit.sql"]
+    SQL --> S7["07_ur_cicd_environments.sql"]
+
+    ROOT --> ST["streamlit/"]
+    ST --> APP["app.py"]
+
+    ROOT --> DOCS["CICD_DEEP_DIVE.md\nCICD_RBAC_DIAGRAMS.md"]
+
+    GH[".github/workflows/"]
+    GH --> WF1["ur-snowflake-cicd.yml"]
+    GH --> WF2["ur-clone-lifecycle.yml"]
 ```

@@ -4,17 +4,18 @@
 
 ## Roadmap Overview
 
-```
-         PHASE 1                    PHASE 2                    PHASE 3
-         30 Days                    60 Days                    90 Days
-  ┌─────────────────┐       ┌─────────────────┐       ┌─────────────────┐
-  │  FOUNDATION     │       │  MARKETPLACE    │       │  FEDERATION     │
-  │                 │       │                 │       │                 │
-  │  Identity Plane │       │  Internal Data  │       │  Federated      │
-  │  Container-by-DB│──────►│  Exchange       │──────►│  Governance     │
-  │  SSO + RBAC     │       │  First Provider │       │  External Mktpl │
-  │  Pilot Domain   │       │  CI/CD Pipeline │       │  Cortex AI Prod │
-  └─────────────────┘       └─────────────────┘       └─────────────────┘
+```mermaid
+flowchart LR
+    subgraph P1["PHASE 1 — 30 Days"]
+        F["FOUNDATION\nIdentity Plane\nContainer-by-DB\nSSO + RBAC\nPilot Domain"]
+    end
+    subgraph P2["PHASE 2 — 60 Days"]
+        M["MARKETPLACE\nInternal Data\nExchange\nFirst Provider\nCI/CD Pipeline"]
+    end
+    subgraph P3["PHASE 3 — 90 Days"]
+        FED["FEDERATION\nFederated\nGovernance\nExternal Mktpl\nCortex AI Prod"]
+    end
+    P1 --> P2 --> P3
 ```
 
 ---

@@ -24,64 +24,46 @@ These principles are adapted from the core DCA framework to UR's specific contex
 
 ### Stage 1: Current State (Fragmented Multi-Account)
 
-```
-┌──────────────┐  ┌──────────────┐  ┌──────────────┐
-│  EDW PROD    │  │  EDW DEV     │  │  DISCOVERY   │
-│  Local Auth  │  │  Mirror      │  │  SSO + RLS   │
-│  Wherescape  │  │              │  │  Cortex AI   │
-│  3 tenants   │  │              │  │  Branch users│
-└──────┬───────┘  └──────────────┘  └──────────────┘
-       │           Manual copies        ▲
-       └────────────────────────────────┘
-              Data Share (read-only)
+```mermaid
+flowchart LR
+    EDW["EDW PROD\nLocal Auth\nWherescape\n3 tenants"] -->|"Data Share\n(read-only)"| DISC["DISCOVERY\nSSO + RLS\nCortex AI\nBranch users"]
+    EDW_DEV["EDW DEV\nMirror"]
+    EDW -.->|"Manual copies"| DISC
 ```
 
 ### Stage 2: Unified (Container-by-DB in Single Hub)
 
-```
-┌──────────────────────────────────────────────────────────┐
-│                   PRIMARY HUB ACCOUNT                    │
-│                   Unified Identity (SSO)                 │
-│                                                          │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌─────────┐   │
-│  │   EDW    │  │ Manning  │  │ Sales Ops│  │ Cortex  │   │
-│  │ RAW →    │  │ RAW →    │  │ RAW →    │  │ Models  │   │
-│  │ CURATED →│  │ CURATED →│  │ CURATED →│  │ Feature │   │
-│  │ SEMANTIC │  │ SEMANTIC │  │ SEMANTIC │  │ Store   │   │
-│  └──────────┘  └──────────┘  └──────────┘  └─────────┘   │
-│                                                          │
-│  ┌─────────────────────────────────────────────────────┐ │
-│  │          SNOWFLAKE HORIZON GOVERNANCE               │ │
-│  │  Tags │ Masking │ Row Access │ Lineage │ Catalog    │ │
-│  └─────────────────────────────────────────────────────┘ │
-└──────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph HUB["PRIMARY HUB ACCOUNT — Unified Identity (SSO)"]
+        EDW["EDW\nRAW →\nCURATED →\nSEMANTIC"]
+        MANNING["Manning\nRAW →\nCURATED →\nSEMANTIC"]
+        SOPS["Sales Ops\nRAW →\nCURATED →\nSEMANTIC"]
+        CORTEX["Cortex\nModels\nFeature\nStore"]
+        subgraph HORIZON["SNOWFLAKE HORIZON GOVERNANCE"]
+            GOV["Tags | Masking | Row Access | Lineage | Catalog"]
+        end
+    end
 ```
 
 ### Stage 3: Federated Platform with Marketplace
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                     UNIFIED IDENTITY PLANE                       │
-├──────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  ┌────────────────────────────────────────────────────────────┐  │
-│  │              PRIMARY HUB (Container-by-DB)                 │  │
-│  │  EDW │ Manning │ Sales Ops │ Fleet │ Telematics │ Cortex   │  │
-│  │  Each domain: RAW → CURATED → SEMANTIC                     │  │
-│  └────────────────────────────┬───────────────────────────────┘  │
-│                               │                                  │
-│  ┌────────────────────────────▼───────────────────────────────┐  │
-│  │              UR PRIVATE DATA EXCHANGE                      │  │
-│  │  Internal Providers: Fleet, Telematics, Maintenance, Ops   │  │
-│  │  Internal Consumers: Analytics, AI/ML, Branch Apps         │  │
-│  │  External Sources: OEM Telematics, Weather, Economic Data  │  │
-│  └────────────────────────────────────────────────────────────┘  │
-│                                                                  │
-│  ┌────────────────────────────────────────────────────────────┐  │
-│  │              SNOWFLAKE HORIZON (Federated Governance)      │  │
-│  │  Policies defined once → follow data across the exchange   │  │
-│  └────────────────────────────────────────────────────────────┘  │
-└──────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph IDENTITY["UNIFIED IDENTITY PLANE"]
+        subgraph HUB["PRIMARY HUB (Container-by-DB)"]
+            DOMAINS["EDW | Manning | Sales Ops | Fleet | Telematics | Cortex\nEach domain: RAW → CURATED → SEMANTIC"]
+        end
+        subgraph EXCHANGE["UR PRIVATE DATA EXCHANGE"]
+            PROVIDERS["Internal Providers: Fleet, Telematics, Maintenance, Ops"]
+            CONSUMERS["Internal Consumers: Analytics, AI/ML, Branch Apps"]
+            EXTERNAL["External Sources: OEM Telematics, Weather, Economic Data"]
+        end
+        subgraph HORIZON["SNOWFLAKE HORIZON (Federated Governance)"]
+            POLICIES["Policies defined once → follow data across the exchange"]
+        end
+    end
+    HUB --> EXCHANGE
 ```
 
 ## Architecture Comparison Scorecard
@@ -100,45 +82,29 @@ This scorecard captures the evolution from UR's current friction to a federated 
 
 The Container-by-DB pattern treats each database as a logical container whose boundaries are **contract boundaries**, not physical account walls. For UR, this means:
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        PRIMARY HUB ACCOUNT                      │
-│                                                                 │
-│  EDW Domain                    Manning Domain                   │
-│  ┌──────────┐                  ┌──────────┐                     │
-│  │ RAW_EDW  │  Fivetran        │ RAW_MAN  │  Fivetran           │
-│  │ (landing)│◄─── ingest       │ (landing)│◄─── ingest          │
-│  └────┬─────┘                  └────┬─────┘                     │
-│       ▼                             ▼                           │
-│  ┌──────────┐                  ┌──────────┐                     │
-│  │CURATED_  │  Dynamic Tables  │CURATED_  │  Dynamic Tables     │
-│  │EDW       │  or dbt          │MANNING   │  or dbt             │
-│  └────┬─────┘                  └────┬─────┘                     │
-│       ▼                             ▼                           │
-│  ┌──────────┐                  ┌──────────┐                     │
-│  │SEMANTIC_ │  Semantic Views  │SEMANTIC_ │  Semantic Views     │
-│  │EDW       │  + Cortex        │MANNING   │  + Cortex           │
-│  └──────────┘                  └──────────┘                     │
-│                                                                 │
-│  Sales Ops Domain              Fleet / Telematics Domain        │
-│  ┌──────────┐                  ┌──────────┐                     │
-│  │ RAW_SOPS │                  │ RAW_FLEET│  IoT / Telematics   │
-│  └────┬─────┘                  └────┬─────┘                     │
-│       ▼                             ▼                           │
-│  ┌──────────┐                  ┌──────────┐                     │
-│  │CURATED_  │                  │CURATED_  │                     │
-│  │SOPS      │                  │FLEET     │                     │
-│  └────┬─────┘                  └────┬─────┘                     │
-│       ▼                             ▼                           │
-│  ┌──────────┐                  ┌──────────┐                     │
-│  │SEMANTIC_ │                  │SEMANTIC_ │                     │
-│  │SOPS      │                  │FLEET     │                     │
-│  └──────────┘                  └──────────┘                     │
-│                                                                 │
-│  Each domain owns its RAW → CURATED → SEMANTIC progression      │
-│  Governance tags and policies applied uniformly via Horizon     │
-│  Data contracts enforce quality and schema at domain boundaries │
-└─────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph HUB["PRIMARY HUB ACCOUNT"]
+        subgraph EDW["EDW Domain"]
+            RAW_EDW["RAW_EDW\n(landing)"] -->|"Dynamic Tables\nor dbt"| CUR_EDW["CURATED_EDW"]
+            CUR_EDW --> SEM_EDW["SEMANTIC_EDW\n+ Cortex"]
+        end
+        subgraph MANNING["Manning Domain"]
+            RAW_MAN["RAW_MAN\n(landing)"] -->|"Dynamic Tables\nor dbt"| CUR_MAN["CURATED_MANNING"]
+            CUR_MAN --> SEM_MAN["SEMANTIC_MANNING\n+ Cortex"]
+        end
+        subgraph SOPS["Sales Ops Domain"]
+            RAW_SOPS["RAW_SOPS"] --> CUR_SOPS["CURATED_SOPS"]
+            CUR_SOPS --> SEM_SOPS["SEMANTIC_SOPS"]
+        end
+        subgraph FLEET["Fleet / Telematics Domain"]
+            RAW_FLEET["RAW_FLEET\nIoT / Telematics"] --> CUR_FLEET["CURATED_FLEET"]
+            CUR_FLEET --> SEM_FLEET["SEMANTIC_FLEET"]
+        end
+        NOTE["Each domain owns its RAW → CURATED → SEMANTIC progression\nGovernance tags and policies applied uniformly via Horizon\nData contracts enforce quality and schema at domain boundaries"]
+    end
+    RAW_EDW -.->|"Fivetran\ningest"| RAW_EDW
+    RAW_MAN -.->|"Fivetran\ningest"| RAW_MAN
 ```
 
 **Key advantages for UR**:
@@ -163,23 +129,35 @@ See [DBT_VS_DYNAMIC_TABLES.md](../../docs/DBT_VS_DYNAMIC_TABLES.md) for the full
 
 The UR Private Data Exchange enables domain teams to publish and consume data products without ETL:
 
-```
-PROVIDERS (Publish)                    CONSUMERS (Subscribe)
-┌──────────────┐                       ┌──────────────────────┐
-│ Fleet Domain │──► Fleet Utilization ─►│ Analytics Team      │
-│              │──► Asset Master ──────►│ Branch Managers     │
-├──────────────┤                       │ Finance              │
-│ Telematics   │──► Sensor Streams ───►│ AI/ML (Cortex)       │
-│              │──► Fault Alerts ──────►│ Maintenance Ops     │
-├──────────────┤                       ├──────────────────────┤
-│ EDW Core     │──► Customer 360 ─────►│ Sales Ops            │
-│              │──► Revenue Metrics ───►│ Regional Directors  │
-├──────────────┤                       ├──────────────────────┤
-│ EXTERNAL     │                       │                      │
-│ OEM Telemetry│──► (Marketplace) ────►│ Fleet Optimization   │
-│ Weather Data │──► (Marketplace) ────►│ Demand Forecasting   │
-│ Economic Data│──► (Marketplace) ────►│ Pricing Models       │
-└──────────────┘                       └──────────────────────┘
+```mermaid
+flowchart LR
+    subgraph PROVIDERS["PROVIDERS (Publish)"]
+        FLEET["Fleet Domain"]
+        TELEM["Telematics"]
+        EDW_CORE["EDW Core"]
+        EXT["EXTERNAL\nOEM Telemetry\nWeather Data\nEconomic Data"]
+    end
+    subgraph PRODUCTS["Data Products"]
+        FU["Fleet Utilization"]
+        AM["Asset Master"]
+        SS["Sensor Streams"]
+        FA["Fault Alerts"]
+        C360["Customer 360"]
+        REV["Revenue Metrics"]
+    end
+    subgraph CONSUMERS["CONSUMERS (Subscribe)"]
+        ANALYTICS["Analytics Team\nBranch Managers\nFinance"]
+        AI_ML["AI/ML (Cortex)\nMaintenance Ops"]
+        SALES["Sales Ops\nRegional Directors"]
+        FLEET_OPT["Fleet Optimization\nDemand Forecasting\nPricing Models"]
+    end
+    FLEET --> FU --> ANALYTICS
+    FLEET --> AM --> ANALYTICS
+    TELEM --> SS --> AI_ML
+    TELEM --> FA --> AI_ML
+    EDW_CORE --> C360 --> SALES
+    EDW_CORE --> REV --> SALES
+    EXT -->|"Marketplace"| FLEET_OPT
 ```
 
 ## Snowflake Horizon — Governance That Follows the Data
@@ -196,35 +174,24 @@ In the federated model, governance policies are defined once at the source domai
 
 ## Cortex AI Pipeline — Discovery to Production
 
-```
-DISCOVERY (Experiment)               PRODUCTION (Operationalize)
-┌──────────────────────┐            ┌──────────────────────┐
-│  Cortex Notebooks    │            │  Cortex AI Services  │
-│  ┌────────────────┐  │   CI/CD    │  ┌────────────────┐  │
-│  │ Predictive     │  │ ────────►  │  │ Predictive     │  │
-│  │ Maintenance    │  │  Promote   │  │ Maintenance    │  │
-│  │ Model (MVP)    │  │            │  │ Model (Prod)   │  │
-│  └────────────────┘  │            │  └────────────────┘  │
-│  ┌────────────────┐  │   CI/CD    │  ┌────────────────┐  │
-│  │ Fleet          │  │ ────────►  │  │ Fleet          │  │
-│  │ Optimization   │  │  Promote   │  │ Optimization   │  │
-│  │ Model (MVP)    │  │            │  │ Model (Prod)   │  │
-│  └────────────────┘  │            │  └────────────────┘  │
-│                      │            │         │            │
-│  Feature Store ◄─────┼─────────── ┼─► Feature Store      │
-│  (Experiment)        │            │   (Production)       │
-└──────────────────────┘            └──────────┬───────────┘
-
-                                               │
-                                               ▼
-                                   ┌──────────────────────┐
-                                   │  Cortex Analyst      │
-                                   │  (Semantic Views)    │
-                                   │                      │
-                                   │  Branch Manager:     │
-                                   │  "What assets can I  │
-                                   │   rent within 50mi?" │
-                                   └──────────────────────┘
+```mermaid
+flowchart LR
+    subgraph DISCOVERY["DISCOVERY (Experiment)"]
+        PM_MVP["Predictive\nMaintenance\nModel (MVP)"]
+        FO_MVP["Fleet\nOptimization\nModel (MVP)"]
+        FS_EXP["Feature Store\n(Experiment)"]
+    end
+    subgraph PRODUCTION["PRODUCTION (Operationalize)"]
+        PM_PROD["Predictive\nMaintenance\nModel (Prod)"]
+        FO_PROD["Fleet\nOptimization\nModel (Prod)"]
+        FS_PROD["Feature Store\n(Production)"]
+    end
+    PM_MVP -->|"CI/CD\nPromote"| PM_PROD
+    FO_MVP -->|"CI/CD\nPromote"| FO_PROD
+    FS_EXP <--> FS_PROD
+    PM_PROD --> CORTEX
+    FO_PROD --> CORTEX
+    CORTEX["Cortex Analyst\n(Semantic Views)\nBranch Manager:\n'What assets can I\nrent within 50mi?'"]
 ```
 
 The key insight: branch managers access AI-powered answers through **Cortex Analyst + Semantic Views**, governed by the same Snowflake Horizon policies that protect the underlying data. No separate AI access layer needed.

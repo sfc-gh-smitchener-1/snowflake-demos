@@ -32,24 +32,12 @@ demos/<customer>/
 
 ## How Focused Demos Relate to Core DCA
 
-```
-┌───────────────────────────────────────────────────────────┐
-│                    CORE DCA FRAMEWORK                     │
-│  sql/ │ docs/ │ dbt_servicenow/ │ streamlit/ │ data/      │
-│ Generic patterns, 6 source systems, contracts, governance │
-└───────────────────────┬───────────────────────────────────┘
-                        │
-          ┌─────────────┼──────────────┐
-          ▼             ▼              ▼
-   ┌─────────────┐ ┌──────────┐ ┌──────────┐
-   │United Rental│ │ Future   │ │ Future   │
-   │ Equipment   │ │ Demo 2   │ │ Demo 3   │
-   │ Rental      │ │          │ │          │
-   └─────────────┘ └──────────┘ └──────────┘
-   Federated        ...          ...
-   Platform,
-   Cortex AI,
-   SDLC Bridge
+```mermaid
+flowchart TB
+    CORE["CORE DCA FRAMEWORK\nsql/ | docs/ | dbt_servicenow/ | streamlit/ | data/\nGeneric patterns, 6 source systems, contracts, governance"]
+    CORE --> UR["United Rentals\nEquipment Rental\nFederated Platform,\nCortex AI, SDLC Bridge"]
+    CORE --> F2["Future Demo 2"]
+    CORE --> F3["Future Demo 3"]
 ```
 
 Each focused demo references core DCA documentation rather than duplicating it. When the core demo shows "how Dynamic Tables work," the focused demo shows "why Dynamic Tables solve *this customer's* fleet availability problem."

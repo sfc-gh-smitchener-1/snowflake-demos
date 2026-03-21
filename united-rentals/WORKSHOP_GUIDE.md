@@ -81,29 +81,19 @@ Every pain point raised in discovery must land in a specific workshop moment. Th
 
 **Whiteboard Layout** — Seven lanes across two rows:
 
-```
-┌──────────────────────────────────────────────────────────────────────────┐
-│                         CURRENT FRICTION POINTS                         │
-├──────────────┬──────────────┬──────────────┬────────────────────────────┤
-│  PATH 2 PROD │   SECURITY   │  ACCOUNT     │   "AND WORLD"             │
-│              │   EXPANSION  │  TOPOLOGY    │   RBAC                    │
-│              │              │              │                            │
-│ Discovery →  │ Analysts →   │ VPC+BC: Prod │ Shared spaces             │
-│ EDW blocked  │ Employees →  │ SSO: Disc    │ + Dept-locked             │
-│              │ External     │ AI: Disc     │ + User-only               │
-│ Wherescape   │              │              │                            │
-│ rewrite      │ 3 RLS        │ EDW: no SSO  │ How do these              │
-│ required     │ frameworks   │ EDW: no AI   │ coexist?                  │
-├──────────────┼──────────────┼──────────────┴────────────────────────────┤
-│    CI/CD     │   SCALE AI   │   DATA OBJECT GOVERNANCE                 │
-│              │              │                                           │
-│ No Git       │ No lineage   │ Data product lifecycle                   │
-│ connections  │ Wherescape   │ Standardizing base domains               │
-│ Disconnected │ docs = HTML  │ Catalog vs dictionary vs ontology        │
-│ repos        │ Semantic     │ How to cultivate each?                   │
-│ Time-travel  │ views not    │ What options today?                      │
-│ as VCS       │ centralized  │                                          │
-└──────────────┴──────────────┴───────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph ROW1["ROW 1"]
+        P2P["PATH 2 PROD\n─────────\nDiscovery → EDW blocked\nWherescape rewrite required"]
+        SEC["SECURITY EXPANSION\n─────────\nAnalysts → Employees → External\n3 RLS frameworks"]
+        ACCT["ACCOUNT TOPOLOGY\n─────────\nVPC+BC: Prod\nSSO: Disc only\nAI: Disc only\nEDW: no SSO, no AI"]
+        AND["'AND WORLD' RBAC\n─────────\nShared spaces\n+ Dept-locked\n+ User-only\nHow do these coexist?"]
+    end
+    subgraph ROW2["ROW 2"]
+        CICD["CI/CD\n─────────\nNo Git connections\nDisconnected repos\nTime-travel as VCS"]
+        AI["SCALE AI\n─────────\nNo lineage\nWherescape docs = HTML\nSemantic views not centralized"]
+        GOV["DATA OBJECT GOVERNANCE\n─────────\nData product lifecycle\nStandardizing base domains\nCatalog vs dictionary vs ontology"]
+    end
 ```
 
 **Facilitation prompts for each lane**:
@@ -124,10 +114,11 @@ Every pain point raised in discovery must land in a specific workshop moment. Th
 > "Complex systems do not scale outcomes until they stabilize dependencies. These seven friction points aren't seven separate problems — they're seven symptoms of one: unstable boundaries. People define intent, but the multi-account topology breaks the chain before Governance and Automation can execute it. Fix the boundaries, and most of these resolve together."
 
 **Draw the dependency chain on the whiteboard**:
-```
-PEOPLE (intent) → GOVERNANCE (policy) → AUTOMATION (execution) → OUTCOMES (value)
-    ↑                                                                    │
-    └──────── Account boundaries break this chain here ─────────────────┘
+
+```mermaid
+flowchart LR
+    PEOPLE["PEOPLE\n(intent)"] --> GOV["GOVERNANCE\n(policy)"] --> AUTO["AUTOMATION\n(execution)"] --> OUT["OUTCOMES\n(value)"]
+    OUT -.->|"Account boundaries\nbreak this chain"| PEOPLE
 ```
 
 **Leave the Friction Map on the whiteboard for the entire meeting.**
@@ -165,11 +156,12 @@ PEOPLE (intent) → GOVERNANCE (policy) → AUTOMATION (execution) → OUTCOMES 
 > "This is where Dynamic Tables or dbt replace Wherescape Red. Each domain team chooses their transformation engine — the architecture doesn't care which tool you use, only that the data contract is satisfied. And because these are logical containers in the same account, they share the identity plane, the governance plane, and the AI plane."
 
 **Pain Point #5 — CI/CD**: Sketch the Git-based promotion path:
-```
-Feature Branch → DEV (RAW_DEV/CURATED_DEV/SEM_DEV)
-      │
-      ▼ Pull Request + Review
-Main Branch → PROD (RAW_PROD/CURATED_PROD/SEM_PROD)
+
+```mermaid
+flowchart TD
+    FEAT["Feature Branch"] -->|"Pull Request + Review"| MAIN["Main Branch"]
+    FEAT --> DEV["DEV\n(RAW_DEV / CURATED_DEV / SEM_DEV)"]
+    MAIN --> PROD["PROD\n(RAW_PROD / CURATED_PROD / SEM_PROD)"]
 ```
 
 ### 10:20-10:35 | Internal Marketplace — Hub-and-Spoke (15 min)
@@ -177,17 +169,13 @@ Main Branch → PROD (RAW_PROD/CURATED_PROD/SEM_PROD)
 **Action**: Sketch the Hub-and-Spoke model where Fleet, Telematics, and Ops act as Data Providers in a Private Exchange, and Discovery/Analytics act as Consumers.
 
 **Whiteboard the marketplace**:
-```
-         ┌──────────────┐
-         │  UR PRIVATE  │
-         │DATA EXCHANGE │
-         └──────┬───────┘
-    ┌───────────┼───────────┐
-    ▼           ▼           ▼
-┌────────┐ ┌────────┐ ┌────────┐
-│ Fleet  │ │Telemat.│ │  Ops   │
-│Provider│ │Provider│ │Provider│
-└────────┘ └────────┘ └────────┘
+
+```mermaid
+flowchart TB
+    EXCHANGE["UR PRIVATE\nDATA EXCHANGE"]
+    EXCHANGE --> FLEET["Fleet\nProvider"]
+    EXCHANGE --> TELEM["Telemat.\nProvider"]
+    EXCHANGE --> OPS["Ops\nProvider"]
 ```
 
 **Pain Point #7 — Data Object Governance**: Use the marketplace to clarify the catalog/dictionary/ontology question:
@@ -204,35 +192,29 @@ Main Branch → PROD (RAW_PROD/CURATED_PROD/SEM_PROD)
 
 **Pain Point #2 — Security Expansion** and **Pain Point #4 — "AND World" RBAC**: This is the conceptual setup before the live demo. Whiteboard the three RLS frameworks:
 
-```
-┌─────────────────────────────────────────────────────────┐
-│              "AND WORLD" RBAC MODEL                      │
-├─────────────────────────────────────────────────────────┤
-│                                                          │
-│  FRAMEWORK 1: Location-Based RLS (RAP_UR_REGION)        │
-│  ├── Fleet Manager: ALL regions                          │
-│  ├── Regional Director: SOUTHWEST only                   │
-│  ├── Branch Manager: SOUTHWEST, branch BR-01024 only     │
-│  └── External Partner: SOUTHWEST only                    │
-│                                                          │
-│  FRAMEWORK 2: Customer-Based RLS (RAP_UR_CUSTOMER)      │
-│  ├── Internal roles: ALL customer types                  │
-│  └── External Partner: CONSTRUCTION, INFRASTRUCTURE,     │
-│      GOVERNMENT only                                     │
-│                                                          │
-│  FRAMEWORK 3: Column-Level Security (Masking Policies)   │
-│  ├── Fleet Manager: Full PII, pricing, credit            │
-│  ├── Regional Director: Full PII, pricing, no credit     │
-│  ├── Branch Manager: Full PII, pricing, no credit        │
-│  ├── Corporate Analyst: Masked PII, pricing, no credit   │
-│  └── External Partner: Masked PII, no pricing, no credit │
-│                                                          │
-│  SHARED + DEPT + USER-ONLY via Role Hierarchy:           │
-│  ├── SHARED: FLEET_AVAILABILITY view (all UR roles)      │
-│  ├── DEPT: RAP filters by region per role                │
-│  └── USER-ONLY: Future — personal sandbox schemas        │
-└─────────────────────────────────────────────────────────┘
-```
+#### "AND WORLD" RBAC Model
+
+**Framework 1: Location-Based RLS (RAP_UR_REGION)**
+- Fleet Manager: ALL regions
+- Regional Director: SOUTHWEST only
+- Branch Manager: SOUTHWEST, branch BR-01024 only
+- External Partner: SOUTHWEST only
+
+**Framework 2: Customer-Based RLS (RAP_UR_CUSTOMER)**
+- Internal roles: ALL customer types
+- External Partner: CONSTRUCTION, INFRASTRUCTURE, GOVERNMENT only
+
+**Framework 3: Column-Level Security (Masking Policies)**
+- Fleet Manager: Full PII, pricing, credit
+- Regional Director: Full PII, pricing, no credit
+- Branch Manager: Full PII, pricing, no credit
+- Corporate Analyst: Masked PII, pricing, no credit
+- External Partner: Masked PII, no pricing, no credit
+
+**SHARED + DEPT + USER-ONLY via Role Hierarchy:**
+- SHARED: FLEET_AVAILABILITY view (all UR roles)
+- DEPT: RAP filters by region per role
+- USER-ONLY: Future — personal sandbox schemas
 
 **Talk track**:
 > "This is the 'AND world' you described. Shared access to the fleet data AND department-locked by region AND graduated column masking by role. These three frameworks run simultaneously on the same tables. We'll show you this live in 15 minutes."
@@ -389,16 +371,15 @@ Main Branch → PROD (RAW_PROD/CURATED_PROD/SEM_PROD)
    - *You don't build three separate systems. You use three Snowflake features that work together natively."*
 
 3. **Walk through the data product lifecycle for Fleet**:
+
+   ```mermaid
+   flowchart LR
+       RAW["RAW_DEV.UNITED_RENTALS\n(ingestion)"] -->|"Tagged:\nUR_DATA_DOMAIN = 'FLEET'"| CURATED["CURATED_DEV.UNITED_RENTALS\n(Dynamic Tables transform)"]
+       CURATED -->|"Tagged: UR_SENSITIVITY\non PII columns\nMasking auto-applied"| SEM["SEM_DEV.UNITED_RENTALS\n(Semantic Views)"]
+       SEM --> CONSUME["Cortex Analyst +\nStreamlit consume"]
+       CONSUME -->|"All governed by\nRBAC + RLS + CLS"| USERS["Users"]
    ```
-   RAW_DEV.UNITED_RENTALS (ingestion) 
-     → Tagged: UR_DATA_DOMAIN = 'FLEET'
-     → CURATED_DEV.UNITED_RENTALS (Dynamic Tables transform)
-     → Tagged: UR_SENSITIVITY on PII columns
-     → Masking policies auto-applied via tags
-     → SEM_DEV.UNITED_RENTALS (Semantic Views)
-     → Cortex Analyst + Streamlit consume
-     → All governed by RBAC + RLS + CLS
-   ```
+
    - Talk track: *"This is the data product lifecycle for one domain — Fleet. Standardize this pattern, and every new domain (Manning, Sales Ops, Finance) follows the same path. The architecture enables reuse, not duplication."*
    - **Point at whiteboard**: "Friction point #7 — data product lifecycle and standardizing base domains — solved."
 
@@ -414,14 +395,27 @@ Main Branch → PROD (RAW_PROD/CURATED_PROD/SEM_PROD)
 
 **Whiteboard the three phases** (see [ROADMAP.md](ROADMAP.md) for full detail):
 
-```
-PHASE 1 (30 Days)              PHASE 2 (60 Days)              PHASE 3 (90 Days)
-───────────────────            ───────────────────            ───────────────────
-Identity Plane                 Internal Marketplace           Federated Governance
-├ SSO harmonize (#3)           ├ First provider: Fleet (#7)   ├ Cross-domain lineage (#6)
-├ Container-by-DB (#1)         ├ Semantic views: Fleet (#6)   ├ External partner access (#2)
-├ Git connection (#5)          ├ CI/CD pipeline (#5)          ├ Production Cortex AI (#3)
-└ RBAC model: "AND world" (#4) └ RLS 3-framework rollout (#2) └ Data contract registry (#7)
+```mermaid
+flowchart LR
+    subgraph P1["PHASE 1 (30 Days)\nIdentity Plane"]
+        P1A["SSO harmonize (#3)"]
+        P1B["Container-by-DB (#1)"]
+        P1C["Git connection (#5)"]
+        P1D["RBAC: 'AND world' (#4)"]
+    end
+    subgraph P2["PHASE 2 (60 Days)\nInternal Marketplace"]
+        P2A["First provider: Fleet (#7)"]
+        P2B["Semantic views: Fleet (#6)"]
+        P2C["CI/CD pipeline (#5)"]
+        P2D["RLS 3-framework rollout (#2)"]
+    end
+    subgraph P3["PHASE 3 (90 Days)\nFederated Governance"]
+        P3A["Cross-domain lineage (#6)"]
+        P3B["External partner access (#2)"]
+        P3C["Production Cortex AI (#3)"]
+        P3D["Data contract registry (#7)"]
+    end
+    P1 --> P2 --> P3
 ```
 
 **Talk track**: "Each line item maps back to a numbered friction point on the board. Phase 1 stabilizes the foundation — identity, containers, Git. Phase 2 lights up the first domain as a data product. Phase 3 scales it and opens it to external consumers."
