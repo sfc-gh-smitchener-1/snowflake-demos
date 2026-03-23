@@ -2,9 +2,9 @@
 United Rentals Fleet Finder — Streamlit in Snowflake (SiS)
 
 Interactive fleet management demo with:
-  - Page 1: Fleet Finder Map — find equipment by location, category, and radius
+  - Page 1: Fleet Finder — find equipment by location, category, radius, and status
   - Page 2: Cortex Analyst — natural language fleet intelligence queries
-  - RBAC Demo — role switcher showing graduated data access
+  - RBAC Demo — role switcher with real Snowflake USE ROLE (RLS + masking)
 
 Runs in Streamlit in Snowflake using only native packages:
   streamlit, pandas, snowflake.snowpark
@@ -12,64 +12,40 @@ Runs in Streamlit in Snowflake using only native packages:
 
 import streamlit as st
 import pandas as pd
-import json
 from snowflake.snowpark.context import get_active_session
 
 # ============================================================================
 # SESSION AND CONFIG
 # ============================================================================
 
-st.set_page_config(page_title="UR Fleet Finder", page_icon="🏗️", layout="wide")
+st.set_page_config(page_title="UR Fleet Finder", layout="wide")
 
-def get_session():
-    return get_active_session()
+session = get_active_session()
 
-# UR-specific roles for RBAC demo
+# Role metadata for the sidebar — governance is enforced by Snowflake, not app code
 UR_ROLES = {
     "UR_FLEET_MANAGER": {
         "label": "Fleet Manager",
         "desc": "Full fleet visibility — all branches, all regions, all pricing",
-        "color": "#2196F3",
-        "regions": ["NORTHEAST", "SOUTHEAST", "MIDWEST", "SOUTHWEST", "WEST"],
-        "mask_pii": False,
-        "show_rates": True,
     },
     "UR_REGIONAL_DIRECTOR": {
         "label": "Regional Director (SW)",
         "desc": "Southwest region only — full pricing",
-        "color": "#4CAF50",
-        "regions": ["SOUTHWEST"],
-        "mask_pii": False,
-        "show_rates": True,
     },
     "UR_BRANCH_MANAGER": {
-        "label": "Branch Manager (Dallas #1)",
-        "desc": "Single branch — Dallas #1 only",
-        "color": "#FF9800",
-        "regions": ["SOUTHWEST"],
-        "branch_filter": "BR-01024",
-        "mask_pii": False,
-        "show_rates": True,
+        "label": "Branch Manager",
+        "desc": "Branch-scoped — limited to assigned branches",
     },
     "UR_CORPORATE_ANALYST": {
         "label": "Corporate Analyst",
-        "desc": "All regions — PII masked, pricing visible",
-        "color": "#9C27B0",
-        "regions": ["NORTHEAST", "SOUTHEAST", "MIDWEST", "SOUTHWEST", "WEST"],
-        "mask_pii": True,
-        "show_rates": True,
+        "desc": "Cross-branch analytics — PII masked",
     },
     "UR_EXTERNAL_PARTNER": {
         "label": "External Partner",
-        "desc": "Southwest only — no PII, no pricing",
-        "color": "#F44336",
-        "regions": ["SOUTHWEST"],
-        "mask_pii": True,
-        "show_rates": False,
+        "desc": "Minimal access — no PII, no pricing",
     },
 }
 
-# Approximate coordinates for search locations
 SEARCH_LOCATIONS = {
     "Dallas, TX": (32.7767, -96.7970),
     "Houston, TX": (29.7604, -95.3698),
@@ -83,81 +59,121 @@ SEARCH_LOCATIONS = {
     "Seattle, WA": (47.6062, -122.3321),
 }
 
+CATEGORIES = [
+    "All", "AERIAL", "EARTHMOVING", "MATERIAL_HANDLING",
+    "GENERAL_TOOLS", "POWER_AND_HVAC", "TRENCH_SAFETY",
+]
+
 MILES_TO_METERS = 1609.344
 
 # ============================================================================
-# ROLE MANAGEMENT
+# ROLE MANAGEMENT — real Snowflake USE ROLE
 # ============================================================================
+
+def init_role():
+    """Set the initial session role on first load."""
+    if "ur_role" not in st.session_state:
+        try:
+            cur = session.sql("SELECT CURRENT_ROLE() AS R").to_pandas().iloc[0]["R"]
+            if cur in UR_ROLES:
+                st.session_state.ur_role = cur
+                return
+        except Exception:
+            pass
+        # Default to Fleet Manager
+        try:
+            session.sql("USE ROLE UR_FLEET_MANAGER").collect()
+        except Exception:
+            pass
+        st.session_state.ur_role = "UR_FLEET_MANAGER"
+
+
+def switch_role(role_name: str) -> bool:
+    """Switch Snowflake session role. RLS and masking policies take effect immediately."""
+    try:
+        session.sql(f"USE ROLE {role_name}").collect()
+        session.sql("USE WAREHOUSE ANALYTICS_WH").collect()
+        st.session_state.ur_role = role_name
+        return True
+    except Exception as e:
+        st.sidebar.error(f"Cannot switch to {role_name}: {e}")
+        return False
+
 
 def get_current_role() -> str:
-    if "ur_role" in st.session_state:
-        return st.session_state.ur_role
-    return "UR_FLEET_MANAGER"
+    return st.session_state.get("ur_role", "UR_FLEET_MANAGER")
 
-def get_role_config() -> dict:
-    return UR_ROLES.get(get_current_role(), UR_ROLES["UR_FLEET_MANAGER"])
 
 # ============================================================================
-# DATA FUNCTIONS
+# DATA FUNCTIONS — no app-level filtering; Snowflake RLS handles scoping
 # ============================================================================
 
-def get_fleet_data(role_config: dict, category: str = None,
-                   status: str = None) -> pd.DataFrame:
-    """Query fleet data with role-based filtering (application-level RBAC demo)."""
-    session = get_session()
-    regions = role_config["regions"]
-    region_list = ",".join([f"'{r}'" for r in regions])
-
-    where_clauses = [f"REGION IN ({region_list})"]
-    if role_config.get("branch_filter"):
-        where_clauses.append(f"BRANCH_ID = '{role_config['branch_filter']}'")
-    if category and category != "All":
-        where_clauses.append(f"CATEGORY = '{category}'")
-    if status and status != "All":
-        where_clauses.append(f"STATUS = '{status}'")
-
-    where = " AND ".join(where_clauses)
-
-    # Select columns based on role permissions
-    rate_cols = """
-        DAILY_RATE, WEEKLY_RATE, MONTHLY_RATE,
-    """ if role_config["show_rates"] else ""
-
-    pii_cols = "BRANCH_MANAGER," if not role_config["mask_pii"] else ""
-
-    sql = f"""
+def get_fleet_summary() -> pd.DataFrame:
+    """Fleet-wide metrics visible to the current role."""
+    sql = """
         SELECT
-            EQUIPMENT_ID, MAKE, MODEL, CATEGORY, DESCRIPTION,
-            STATUS, STATUS_LABEL, CONDITION, YEAR_MANUFACTURED,
-            EQUIPMENT_LAT, EQUIPMENT_LON,
-            {rate_cols}
-            HOUR_METER_READING,
-            BRANCH_ID, BRANCH_NAME, BRANCH_CITY, BRANCH_STATE,
-            BRANCH_LAT, BRANCH_LON, REGION,
-            {pii_cols}
-            FUEL_LEVEL_PCT, FAULT_CODE
+            COUNT(*) AS TOTAL_EQUIPMENT,
+            COUNT_IF(STATUS = 'AVAILABLE') AS AVAILABLE,
+            COUNT_IF(STATUS = 'RENTED') AS RENTED,
+            COUNT_IF(STATUS = 'MAINTENANCE') AS IN_MAINTENANCE,
+            COUNT(DISTINCT BRANCH_ID) AS BRANCHES,
+            COUNT(DISTINCT REGION) AS REGIONS,
+            ROUND(COUNT_IF(STATUS = 'RENTED') * 100.0
+                  / NULLIF(COUNT(*), 0), 1) AS UTILIZATION_PCT
         FROM CURATED_DEV.UNITED_RENTALS.FLEET_AVAILABILITY
-        WHERE {where}
-        ORDER BY CATEGORY, MAKE, MODEL
     """
     try:
         return session.sql(sql).to_pandas()
     except Exception as e:
-        st.error(f"Query error: {e}")
+        st.error(f"Fleet summary failed — check role grants: {e}")
         return pd.DataFrame()
 
 
-def get_branch_summary(role_config: dict) -> pd.DataFrame:
-    """Get branch-level equipment counts for map markers."""
-    session = get_session()
-    regions = role_config["regions"]
-    region_list = ",".join([f"'{r}'" for r in regions])
+def search_equipment(lat: float, lon: float, radius_miles: float,
+                     category: str = "All",
+                     status: str = "Available") -> pd.DataFrame:
+    """Find equipment within radius. Snowflake RLS scopes results to the role."""
+    radius_m = radius_miles * MILES_TO_METERS
 
-    branch_filter = ""
-    if role_config.get("branch_filter"):
-        branch_filter = f"AND e.BRANCH_ID = '{role_config['branch_filter']}'"
+    filters = [
+        f"ST_DISTANCE(EQUIPMENT_LOCATION, ST_MAKEPOINT({lon}, {lat})) <= {radius_m}"
+    ]
+    if status == "Available":
+        filters.append("STATUS = 'AVAILABLE'")
+    elif status == "Rented":
+        filters.append("STATUS = 'RENTED'")
+    elif status == "Maintenance":
+        filters.append("STATUS = 'MAINTENANCE'")
+    if category and category != "All":
+        filters.append(f"CATEGORY = '{category}'")
+
+    where = " AND ".join(filters)
 
     sql = f"""
+        SELECT
+            EQUIPMENT_ID, MAKE, MODEL, CATEGORY, STATUS, CONDITION,
+            EQUIPMENT_LAT, EQUIPMENT_LON,
+            DAILY_RATE, WEEKLY_RATE, MONTHLY_RATE,
+            BRANCH_NAME, BRANCH_CITY, BRANCH_STATE, REGION,
+            FUEL_LEVEL_PCT, FAULT_CODE,
+            ROUND(ST_DISTANCE(
+                EQUIPMENT_LOCATION, ST_MAKEPOINT({lon}, {lat})
+            ) / {MILES_TO_METERS}, 1) AS DISTANCE_MILES
+        FROM CURATED_DEV.UNITED_RENTALS.FLEET_AVAILABILITY
+        WHERE {where}
+        ORDER BY DISTANCE_MILES ASC
+        LIMIT 200
+    """
+    try:
+        return session.sql(sql).to_pandas()
+    except Exception as e:
+        st.error(f"Search failed — check role grants on FLEET_AVAILABILITY: {e}")
+        return pd.DataFrame()
+
+
+def get_branch_summary() -> pd.DataFrame:
+    """Branch-level equipment counts. RLS scopes to the role's allowed branches."""
+    sql = """
         SELECT
             b.BRANCH_ID, b.BRANCH_NAME, b.CITY, b.STATE,
             b.LATITUDE, b.LONGITUDE, b.REGION,
@@ -168,8 +184,6 @@ def get_branch_summary(role_config: dict) -> pd.DataFrame:
         FROM CURATED_DEV.UNITED_RENTALS.DIM_BRANCH b
         LEFT JOIN CURATED_DEV.UNITED_RENTALS.DIM_EQUIPMENT e
             ON b.BRANCH_ID = e.BRANCH_ID
-        WHERE b.REGION IN ({region_list})
-            {branch_filter}
         GROUP BY b.BRANCH_ID, b.BRANCH_NAME, b.CITY, b.STATE,
                  b.LATITUDE, b.LONGITUDE, b.REGION
         ORDER BY TOTAL_EQUIPMENT DESC
@@ -177,50 +191,7 @@ def get_branch_summary(role_config: dict) -> pd.DataFrame:
     try:
         return session.sql(sql).to_pandas()
     except Exception as e:
-        st.error(f"Query error: {e}")
-        return pd.DataFrame()
-
-
-def search_nearby_equipment(lat: float, lon: float, radius_miles: float,
-                            category: str, role_config: dict) -> pd.DataFrame:
-    """Find available equipment within radius using ST_DISTANCE."""
-    session = get_session()
-    radius_meters = radius_miles * MILES_TO_METERS
-    regions = role_config["regions"]
-    region_list = ",".join([f"'{r}'" for r in regions])
-
-    cat_filter = f"AND CATEGORY = '{category}'" if category and category != "All" else ""
-    branch_filter = f"AND BRANCH_ID = '{role_config['branch_filter']}'" if role_config.get("branch_filter") else ""
-
-    rate_cols = "DAILY_RATE, WEEKLY_RATE, MONTHLY_RATE," if role_config["show_rates"] else ""
-
-    sql = f"""
-        SELECT
-            EQUIPMENT_ID, MAKE, MODEL, CATEGORY, DESCRIPTION,
-            STATUS, CONDITION,
-            EQUIPMENT_LAT, EQUIPMENT_LON,
-            {rate_cols}
-            BRANCH_NAME, BRANCH_CITY, BRANCH_STATE, REGION,
-            ROUND(ST_DISTANCE(
-                EQUIPMENT_LOCATION,
-                ST_MAKEPOINT({lon}, {lat})
-            ) / {MILES_TO_METERS}, 1) AS DISTANCE_MILES
-        FROM CURATED_DEV.UNITED_RENTALS.FLEET_AVAILABILITY
-        WHERE ST_DISTANCE(
-                EQUIPMENT_LOCATION,
-                ST_MAKEPOINT({lon}, {lat})
-              ) <= {radius_meters}
-          AND STATUS = 'AVAILABLE'
-          AND REGION IN ({region_list})
-          {cat_filter}
-          {branch_filter}
-        ORDER BY DISTANCE_MILES ASC
-        LIMIT 500
-    """
-    try:
-        return session.sql(sql).to_pandas()
-    except Exception as e:
-        st.error(f"Query error: {e}")
+        st.error(f"Branch summary failed: {e}")
         return pd.DataFrame()
 
 
@@ -230,10 +201,8 @@ def search_nearby_equipment(lat: float, lon: float, radius_miles: float,
 
 def call_cortex_analyst(prompt: str, semantic_view: str):
     """Call Cortex Analyst API for natural language to SQL."""
-    session = get_session()
     try:
-        rest = session._conn._rest
-        response = rest.request(
+        response = session._conn._rest.request(
             url="/api/v2/cortex/analyst/message",
             method="POST",
             body={
@@ -256,13 +225,23 @@ def parse_analyst_response(response: dict):
     sql = None
     text_parts = []
     if response and "message" in response:
-        content = response["message"].get("content", [])
-        for item in content:
+        for item in response["message"].get("content", []):
             if item.get("type") == "sql":
                 sql = item.get("statement", "")
             elif item.get("type") == "text":
                 text_parts.append(item.get("text", ""))
     return sql, "\n".join(text_parts)
+
+
+def _auto_map(df: pd.DataFrame):
+    """Render a map if the dataframe has lat/lon columns."""
+    lat_cols = [c for c in df.columns if "LAT" in c.upper()]
+    lon_cols = [c for c in df.columns if "LON" in c.upper()]
+    if lat_cols and lon_cols:
+        m = df.rename(columns={lat_cols[0]: "latitude", lon_cols[0]: "longitude"})
+        m = m.dropna(subset=["latitude", "longitude"])
+        if not m.empty:
+            st.map(m[["latitude", "longitude"]])
 
 
 # ============================================================================
@@ -275,140 +254,127 @@ def render_sidebar():
         st.caption("United Rentals DCA Demo")
         st.divider()
 
-        # Role Switcher
-        st.subheader("RBAC Demo")
-        current_role = get_current_role()
+        # Role Switcher — actually switches Snowflake session role
+        st.subheader("RBAC Role")
+        current = get_current_role()
         role_keys = list(UR_ROLES.keys())
-        current_idx = role_keys.index(current_role) if current_role in role_keys else 0
+        idx = role_keys.index(current) if current in role_keys else 0
 
         selected = st.selectbox(
             "Active Role",
             role_keys,
-            index=current_idx,
+            index=idx,
             format_func=lambda r: UR_ROLES[r]["label"],
         )
-        if selected != current_role:
-            st.session_state.ur_role = selected
-            st.rerun()
+        if selected != current:
+            if switch_role(selected):
+                st.rerun()
 
-        role_cfg = get_role_config()
-        st.markdown(f"**{role_cfg['desc']}**")
+        cfg = UR_ROLES.get(current, {})
+        st.markdown(f"**{cfg.get('desc', '')}**")
 
-        # Access badge
-        badges = []
-        badges.append(f"Regions: {', '.join(role_cfg['regions'])}")
-        if role_cfg.get("branch_filter"):
-            badges.append(f"Branch: {role_cfg['branch_filter']}")
-        badges.append(f"PII: {'Masked' if role_cfg['mask_pii'] else 'Visible'}")
-        badges.append(f"Pricing: {'Hidden' if not role_cfg['show_rates'] else 'Visible'}")
-        for b in badges:
-            st.caption(f"  {b}")
+        # Live access summary from Snowflake (proves RLS is working)
+        try:
+            row = session.sql("""
+                SELECT COUNT(DISTINCT REGION) AS R, COUNT(DISTINCT BRANCH_ID) AS B
+                FROM CURATED_DEV.UNITED_RENTALS.FLEET_AVAILABILITY
+            """).to_pandas().iloc[0]
+            st.caption(f"Visible: {int(row['R'])} regions, {int(row['B'])} branches")
+        except Exception:
+            st.caption("Visible: checking...")
 
         st.divider()
-
-        # Navigation
-        st.subheader("Navigation")
-        page = st.radio("Page", ["Fleet Finder", "Cortex Analyst"], label_visibility="collapsed")
+        page = st.radio("Page", ["Fleet Finder", "Cortex Analyst"],
+                        label_visibility="collapsed")
         return page
 
 
 # ============================================================================
-# PAGE 1: FLEET FINDER MAP
+# PAGE 1: FLEET FINDER
 # ============================================================================
 
 def render_fleet_finder():
-    role_config = get_role_config()
     st.header("Fleet Finder")
-    st.caption("Find available equipment by location, category, and proximity")
 
     # Search controls
-    col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
-    with col1:
+    c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
+    with c1:
         location = st.selectbox("Search Near", list(SEARCH_LOCATIONS.keys()))
-    with col2:
-        radius = st.slider("Radius (miles)", 10, 200, 50)
-    with col3:
-        categories = ["All", "AERIAL", "EARTHMOVING", "MATERIAL_HANDLING",
-                      "GENERAL_TOOLS", "POWER_AND_HVAC", "TRENCH_SAFETY"]
-        category = st.selectbox("Category", categories)
-    with col4:
-        st.write("")  # spacer
-        search_clicked = st.button("Search", type="primary", use_container_width=True)
+    with c2:
+        radius = st.slider("Radius (mi)", 10, 250, 100)
+    with c3:
+        category = st.selectbox("Category", CATEGORIES)
+    with c4:
+        status = st.selectbox("Status", ["Available", "Rented", "Maintenance", "All"])
 
-    search_lat, search_lon = SEARCH_LOCATIONS[location]
+    lat, lon = SEARCH_LOCATIONS[location]
 
-    # Metrics row
-    branch_df = get_branch_summary(role_config)
-    fleet_df = get_fleet_data(role_config)
+    # Fleet-wide metrics
+    summary = get_fleet_summary()
+    if not summary.empty:
+        s = summary.iloc[0]
+        m1, m2, m3, m4, m5, m6 = st.columns(6)
+        m1.metric("Branches", int(s.get("BRANCHES", 0)))
+        m2.metric("Equipment", int(s.get("TOTAL_EQUIPMENT", 0)))
+        m3.metric("Available", int(s.get("AVAILABLE", 0)))
+        m4.metric("On Rent", int(s.get("RENTED", 0)))
+        m5.metric("In Service", int(s.get("IN_MAINTENANCE", 0)))
+        m6.metric("Utilization", f"{s.get('UTILIZATION_PCT', 0)}%")
 
-    if not fleet_df.empty:
-        m1, m2, m3, m4, m5 = st.columns(5)
-        m1.metric("Branches", len(branch_df) if not branch_df.empty else 0)
-        m2.metric("Total Equipment", len(fleet_df))
-        m3.metric("Available", len(fleet_df[fleet_df["STATUS"] == "AVAILABLE"]))
-        m4.metric("On Rent", len(fleet_df[fleet_df["STATUS"] == "RENTED"]))
-        m5.metric("In Maintenance", len(fleet_df[fleet_df["STATUS"] == "MAINTENANCE"]))
+    # Auto-search on every render — no click gate
+    results = search_equipment(lat, lon, radius, category, status)
 
-    # Map and results
-    if search_clicked or "search_results" not in st.session_state:
-        results = search_nearby_equipment(search_lat, search_lon, radius, category, role_config)
-        st.session_state.search_results = results
-        st.session_state.search_location = (search_lat, search_lon)
-        st.session_state.search_radius = radius
-    else:
-        results = st.session_state.get("search_results", pd.DataFrame())
-
-    # Map display
-    map_tab, table_tab = st.tabs(["Map View", "Table View"])
+    # Results in tabs
+    map_tab, table_tab, branch_tab = st.tabs(["Map", "Equipment List", "Branches"])
 
     with map_tab:
         if not results.empty:
-            st.success(f"Found **{len(results)}** available equipment within **{radius} miles** of {location}")
-
-            # Build map data — equipment points
+            label = status if status != "All" else "total"
+            st.success(f"**{len(results)}** {label.lower()} equipment within "
+                       f"**{radius} mi** of {location}")
             map_data = results.rename(columns={
-                "EQUIPMENT_LAT": "latitude",
-                "EQUIPMENT_LON": "longitude",
-            })
-
-            # Show the map with st.map (available in SiS)
-            st.map(map_data[["latitude", "longitude"]], zoom=7)
-        elif search_clicked:
-            st.warning(f"No available equipment found within {radius} miles of {location} for the selected filters.")
+                "EQUIPMENT_LAT": "latitude", "EQUIPMENT_LON": "longitude"})
+            st.map(map_data[["latitude", "longitude"]], zoom=6)
         else:
-            st.info("Click **Search** to find available equipment near a location.")
-
-        # Branch summary below map
-        if not branch_df.empty:
-            with st.expander("Branch Summary", expanded=False):
-                st.dataframe(
-                    branch_df[["BRANCH_NAME", "CITY", "STATE", "REGION",
-                               "TOTAL_EQUIPMENT", "AVAILABLE", "RENTED", "IN_MAINTENANCE"]],
-                    use_container_width=True,
-                    hide_index=True,
-                )
+            st.warning(f"No equipment found within {radius} mi of {location} "
+                       f"for the current filters and role.")
 
     with table_tab:
         if not results.empty:
-            display_cols = ["EQUIPMENT_ID", "MAKE", "MODEL", "CATEGORY", "DESCRIPTION",
-                           "CONDITION", "BRANCH_NAME", "BRANCH_CITY", "REGION", "DISTANCE_MILES"]
-            if role_config["show_rates"]:
-                display_cols.extend(["DAILY_RATE", "WEEKLY_RATE", "MONTHLY_RATE"])
-
-            available_cols = [c for c in display_cols if c in results.columns]
+            cols = [
+                "EQUIPMENT_ID", "MAKE", "MODEL", "CATEGORY", "STATUS",
+                "CONDITION", "BRANCH_NAME", "REGION", "DISTANCE_MILES",
+                "DAILY_RATE", "WEEKLY_RATE", "MONTHLY_RATE",
+                "FUEL_LEVEL_PCT", "FAULT_CODE",
+            ]
+            visible = [c for c in cols if c in results.columns]
             st.dataframe(
-                results[available_cols],
+                results[visible],
                 use_container_width=True,
                 hide_index=True,
                 column_config={
-                    "DAILY_RATE": st.column_config.NumberColumn("Daily Rate", format="$%.2f"),
-                    "WEEKLY_RATE": st.column_config.NumberColumn("Weekly Rate", format="$%.2f"),
-                    "MONTHLY_RATE": st.column_config.NumberColumn("Monthly Rate", format="$%.2f"),
-                    "DISTANCE_MILES": st.column_config.NumberColumn("Distance (mi)", format="%.1f"),
+                    "DAILY_RATE": st.column_config.NumberColumn("Daily $", format="$%.0f"),
+                    "WEEKLY_RATE": st.column_config.NumberColumn("Weekly $", format="$%.0f"),
+                    "MONTHLY_RATE": st.column_config.NumberColumn("Monthly $", format="$%.0f"),
+                    "DISTANCE_MILES": st.column_config.NumberColumn("Dist (mi)", format="%.1f"),
+                    "FUEL_LEVEL_PCT": st.column_config.ProgressColumn(
+                        "Fuel %", min_value=0, max_value=100),
                 },
             )
         else:
-            st.info("Search results will appear here.")
+            st.info("No equipment matches the current filters.")
+
+    with branch_tab:
+        branches = get_branch_summary()
+        if not branches.empty:
+            st.dataframe(
+                branches[["BRANCH_NAME", "CITY", "STATE", "REGION",
+                           "TOTAL_EQUIPMENT", "AVAILABLE", "RENTED", "IN_MAINTENANCE"]],
+                use_container_width=True,
+                hide_index=True,
+            )
+        else:
+            st.info("No branches visible for the current role.")
 
 
 # ============================================================================
@@ -416,11 +382,8 @@ def render_fleet_finder():
 # ============================================================================
 
 def render_cortex_page():
-    role_config = get_role_config()
     st.header("Fleet Intelligence — Cortex Analyst")
-    st.caption("Ask natural language questions about fleet, rentals, and operations")
 
-    # Semantic view selector
     sv_options = {
         "FLEET_FINDER": "SEM_DEV.UNITED_RENTALS.FLEET_FINDER",
         "RENTAL_ANALYTICS": "SEM_DEV.UNITED_RENTALS.RENTAL_ANALYTICS",
@@ -428,36 +391,30 @@ def render_cortex_page():
     selected_sv = st.selectbox("Semantic View", list(sv_options.keys()))
     semantic_view = sv_options[selected_sv]
 
-    # Sample questions
-    if selected_sv == "FLEET_FINDER":
-        samples = [
+    samples = {
+        "FLEET_FINDER": [
             "How many pieces of equipment are available by category?",
-            "Show me available boom lifts in the Southwest region",
+            "Show me available aerial equipment in the Southwest",
             "Which branches have the most idle equipment?",
-            "What is the average daily rate by equipment category?",
-            "How many pieces of equipment have active fault codes?",
-        ]
-    else:
-        samples = [
+            "What is the average daily rate by category?",
+        ],
+        "RENTAL_ANALYTICS": [
             "What is total rental revenue by region?",
-            "Show average rental duration by equipment category",
+            "Average rental duration by equipment category",
             "Which customers have the highest rental spend?",
             "How many active contracts are there by region?",
-            "What is the revenue breakdown by rental term?",
-        ]
+        ],
+    }
 
-    st.caption("Sample questions:")
-    sample_cols = st.columns(len(samples))
-    for i, q in enumerate(samples):
-        with sample_cols[i]:
-            if st.button(q, key=f"sample_{i}", use_container_width=True):
+    cols = st.columns(len(samples[selected_sv]))
+    for i, q in enumerate(samples[selected_sv]):
+        with cols[i]:
+            if st.button(q, key=f"s_{i}", use_container_width=True):
                 st.session_state.analyst_input = q
 
-    # Chat interface
     if "analyst_history" not in st.session_state:
         st.session_state.analyst_history = []
 
-    # Display history
     for entry in st.session_state.analyst_history:
         with st.chat_message("user"):
             st.write(entry["question"])
@@ -465,42 +422,28 @@ def render_cortex_page():
             if entry.get("text"):
                 st.write(entry["text"])
             if entry.get("sql"):
-                with st.expander("Generated SQL"):
+                with st.expander("SQL"):
                     st.code(entry["sql"], language="sql")
             if entry.get("results") is not None and not entry["results"].empty:
                 st.dataframe(entry["results"], use_container_width=True, hide_index=True)
-
-                # If results have lat/lon, show on map
-                lat_cols = [c for c in entry["results"].columns if "LAT" in c.upper()]
-                lon_cols = [c for c in entry["results"].columns if "LON" in c.upper()]
-                if lat_cols and lon_cols:
-                    map_df = entry["results"].rename(columns={
-                        lat_cols[0]: "latitude",
-                        lon_cols[0]: "longitude",
-                    })
-                    if "latitude" in map_df.columns and "longitude" in map_df.columns:
-                        map_df = map_df.dropna(subset=["latitude", "longitude"])
-                        if not map_df.empty:
-                            st.map(map_df[["latitude", "longitude"]])
-
+                _auto_map(entry["results"])
             if entry.get("error"):
                 st.error(entry["error"])
 
-    # Input
     default_input = st.session_state.pop("analyst_input", "")
-    prompt = st.chat_input("Ask about fleet or rentals...", key="analyst_chat")
+    prompt = st.chat_input("Ask about fleet or rentals...")
     if default_input and not prompt:
         prompt = default_input
 
     if prompt:
         with st.chat_message("user"):
             st.write(prompt)
-
         with st.chat_message("assistant"):
             with st.spinner("Thinking..."):
                 response, error = call_cortex_analyst(prompt, semantic_view)
 
-            entry = {"question": prompt, "text": None, "sql": None, "results": None, "error": None}
+            entry = {"question": prompt, "text": None, "sql": None,
+                     "results": None, "error": None}
 
             if error:
                 st.error(f"Cortex Analyst error: {error}")
@@ -511,35 +454,21 @@ def render_cortex_page():
                     st.write(text)
                     entry["text"] = text
                 if sql:
-                    with st.expander("Generated SQL"):
+                    with st.expander("SQL"):
                         st.code(sql, language="sql")
                     entry["sql"] = sql
-
-                    # Execute the generated SQL
                     try:
-                        session = get_session()
                         result_df = session.sql(sql).to_pandas()
-                        st.dataframe(result_df, use_container_width=True, hide_index=True)
+                        st.dataframe(result_df, use_container_width=True,
+                                     hide_index=True)
                         entry["results"] = result_df
-
-                        # Auto-map if geospatial columns found
-                        lat_cols = [c for c in result_df.columns if "LAT" in c.upper()]
-                        lon_cols = [c for c in result_df.columns if "LON" in c.upper()]
-                        if lat_cols and lon_cols:
-                            map_df = result_df.rename(columns={
-                                lat_cols[0]: "latitude",
-                                lon_cols[0]: "longitude",
-                            })
-                            map_df = map_df.dropna(subset=["latitude", "longitude"])
-                            if not map_df.empty:
-                                st.map(map_df[["latitude", "longitude"]])
-                    except Exception as exec_err:
-                        st.error(f"SQL execution error: {exec_err}")
-                        entry["error"] = str(exec_err)
+                        _auto_map(result_df)
+                    except Exception as e:
+                        st.error(f"SQL error: {e}")
+                        entry["error"] = str(e)
 
             st.session_state.analyst_history.append(entry)
 
-    # Clear history
     if st.session_state.analyst_history:
         if st.button("Clear History"):
             st.session_state.analyst_history = []
@@ -551,6 +480,7 @@ def render_cortex_page():
 # ============================================================================
 
 def main():
+    init_role()
     page = render_sidebar()
     if page == "Fleet Finder":
         render_fleet_finder()
