@@ -17,6 +17,7 @@
 --   │ Rental Rates            │ Full     │ Full    │ Full   │ Full │ Hidden │
 --   │ Regions Visible         │ All      │ Assign  │ Assign │ All  │ Assign │
 --   │ Branches Visible        │ All      │ Region  │ 1 Only │ All  │ Region │
+--   │ View-Level RLS          │ Yes      │ Yes     │ Yes    │ Yes  │ Yes    │
 --   └─────────────────────────┴──────────┴─────────┴────────┴──────┴────────┘
 --
 -- Prerequisites: 01_ur_setup.sql, 03_ur_curated_layer.sql
@@ -93,7 +94,7 @@ CREATE OR REPLACE MASKING POLICY CURATED_DEV.UNITED_RENTALS.MASK_UR_CREDIT
 -- ROW ACCESS POLICY (region/branch scoping)
 -- ═══════════════════════════════════════════════════════════════════════════
 
--- Row access based on region mapping table
+-- Row access based on region mapping table (for direct table access)
 CREATE OR REPLACE ROW ACCESS POLICY CURATED_DEV.UNITED_RENTALS.RAP_UR_REGION
     AS (region_val VARCHAR) RETURNS BOOLEAN ->
     CASE
@@ -108,6 +109,31 @@ CREATE OR REPLACE ROW ACCESS POLICY CURATED_DEV.UNITED_RENTALS.RAP_UR_REGION
         ELSE FALSE
     END
     COMMENT = 'Restricts row visibility by region based on role-region mapping table';
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- VIEW-LEVEL ROW ACCESS POLICY (region + branch scoping)
+-- ─────────────────────────────────────────────────────────────────────────────
+-- IMPORTANT: RLS policies on underlying tables evaluate with the VIEW OWNER's
+-- role context (DATA_ADMIN), which bypasses the admin check. To enforce RLS
+-- through views, the policy must be applied directly to the VIEW.
+--
+-- RAP_FLEET_VIEW uses two columns: REGION (region scoping) and BRANCH_ID
+-- (branch-level scoping for UR_BRANCH_MANAGER). The mapping table controls:
+--   - BRANCH_ID = NULL  → role sees ALL branches in that region
+--   - BRANCH_ID = value → role sees ONLY that specific branch
+CREATE OR REPLACE ROW ACCESS POLICY CURATED_DEV.UNITED_RENTALS.RAP_FLEET_VIEW
+    AS (region_val VARCHAR, branch_id_val VARCHAR) RETURNS BOOLEAN ->
+    CASE
+        WHEN CURRENT_ROLE() = 'DATA_ADMIN' THEN TRUE
+        WHEN EXISTS (
+            SELECT 1 FROM CURATED_DEV.UNITED_RENTALS.ROLE_REGION_MAPPING
+            WHERE ROLE_NAME = CURRENT_ROLE()
+              AND REGION = region_val
+              AND (BRANCH_ID IS NULL OR BRANCH_ID = branch_id_val)
+        ) THEN TRUE
+        ELSE FALSE
+    END
+    COMMENT = 'View-level RLS: region + branch scoping via ROLE_REGION_MAPPING';
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- APPLY MASKING POLICIES TO CURATED TABLES
@@ -271,4 +297,40 @@ ALTER TABLE CURATED_DEV.UNITED_RENTALS.DIM_CUSTOMER
 -- role-to-region assignments. Updating one row changes access for
 -- every table that uses RAP_UR_REGION — no per-table edits required.
 
-SELECT 'Governance complete: 5 masking policies, 2 row access policies, AND-world RBAC, tags applied.' AS STATUS;
+-- ═══════════════════════════════════════════════════════════════════════════
+-- SECURE VIEW + VIEW-LEVEL RLS
+-- ═══════════════════════════════════════════════════════════════════════════
+-- FLEET_AVAILABILITY must be a SECURE VIEW so that:
+--   1. The view definition is hidden from non-owner roles
+--   2. The query optimizer cannot push predicates through (prevents data leakage)
+--
+-- The view-level RAP_FLEET_VIEW policy is applied ON the view itself because
+-- table-level policies (RAP_UR_REGION on DIM_BRANCH) evaluate with the VIEW
+-- OWNER's context (DATA_ADMIN) when accessed through a view. Applying the
+-- policy to the view ensures CURRENT_ROLE() returns the caller's actual role.
+
+ALTER VIEW CURATED_DEV.UNITED_RENTALS.FLEET_AVAILABILITY SET SECURE;
+
+ALTER VIEW CURATED_DEV.UNITED_RENTALS.FLEET_AVAILABILITY
+    ADD ROW ACCESS POLICY CURATED_DEV.UNITED_RENTALS.RAP_FLEET_VIEW ON (REGION, BRANCH_ID);
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- FIX ROLE_REGION_MAPPING DATA
+-- ═══════════════════════════════════════════════════════════════════════════
+-- UR_BRANCH_MANAGER is mapped to SOUTHWEST + BR-01069 (Dallas #1).
+-- The BRANCH_ID must match an actual branch in the SOUTHWEST region.
+UPDATE CURATED_DEV.UNITED_RENTALS.ROLE_REGION_MAPPING
+SET BRANCH_ID = 'BR-01069'
+WHERE ROLE_NAME = 'UR_BRANCH_MANAGER' AND REGION = 'SOUTHWEST' AND BRANCH_ID != 'BR-01069';
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- VERIFICATION
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Expected results through FLEET_AVAILABILITY (SECURE VIEW + RAP_FLEET_VIEW):
+--   UR_FLEET_MANAGER     → 5000 rows, 5 regions, 100 branches (full access)
+--   UR_CORPORATE_ANALYST → 5000 rows, 5 regions, 100 branches (rates visible, PII masked)
+--   UR_REGIONAL_DIRECTOR →  723 rows, 1 region,   14 branches (SOUTHWEST only)
+--   UR_BRANCH_MANAGER    →   60 rows, 1 region,    1 branch  (BR-01069 Dallas #1)
+--   UR_EXTERNAL_PARTNER  →  723 rows, 1 region,   14 branches (SOUTHWEST, rates masked)
+
+SELECT 'Governance complete: 5 masking policies, 3 row access policies (incl. view-level), SECURE VIEW, AND-world RBAC, tags applied.' AS STATUS;
