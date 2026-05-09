@@ -63,11 +63,57 @@ The base Knowledge Graph (scripts 11-15) provides PATIENT nodes and PATIENT→EN
 | [ROADMAP.md](ROADMAP.md) | 30/60/90 phased execution for HCLS Knowledge Graph |
 | [DEMO_SCRIPT.md](DEMO_SCRIPT.md) | 15-minute live demo walkthrough |
 
+## Data Generation
+
+Generate ~100MB of realistic synthetic FHIR clinical data:
+
+```bash
+cd demos/hcls/tools
+pip install faker    # One-time dependency
+
+# Full dataset (~100MB, 9 tables, 320K+ records)
+python generate_hcls_data.py --output ../data
+
+# Quick test (~10MB)
+python generate_hcls_data.py --output ../data --quick
+
+# Scaled (2x for load testing)
+python generate_hcls_data.py --output ../data --scale 2.0
+```
+
+### Generated Tables
+
+| Table | Records | Key PHI Fields | ~Size |
+|-------|---------|---------------|-------|
+| patients | 10,000 | SSN, DOB, MRN, address, phone, email | 8MB |
+| practitioners | 500 | NPI, DEA number | 0.3MB |
+| organizations | 50 | — | 0.02MB |
+| encounters | 50,000 | patient_id, diagnosis codes | 20MB |
+| conditions | 30,000 | ICD-10 codes, patient_id | 10MB |
+| observations | 100,000 | LOINC codes, clinical values | 35MB |
+| medications | 25,000 | RxNorm codes, prescriber | 10MB |
+| procedures | 15,000 | CPT codes, patient_id | 6MB |
+| claims | 40,000 | charges, payer, patient_id | 15MB |
+
+### Loading to Snowflake
+
+```sql
+-- Upload to stage
+PUT file:///path/to/demos/hcls/data/*.csv @RAW_DEV.STAGING.DATA_STAGE/hcls/ AUTO_COMPRESS=TRUE;
+
+-- Load using dynamic schema inference
+CALL RAW_DEV.STAGING.LOAD_SOURCE_SYSTEM('FHIR', 'CSV');
+```
+
 ## Setup Instructions
 
 ```bash
 # Prerequisites: Core DCA demo deployed (scripts 01-15)
 # FHIR data generated and loaded
+
+# 0. Generate and load HCLS data
+cd demos/hcls/tools && python generate_hcls_data.py --output ../data
+# Upload CSVs to Snowflake stage (see Data Generation section)
 
 # 1. Populate HCLS-specific graph nodes and edges
 @demos/hcls/sql/01_hcls_graph_populate.sql

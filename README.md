@@ -17,6 +17,7 @@ The core DCA demo (`/sql`, `/docs`, `/dbt_servicenow`, `/python`, `/ontology/spc
 |------|----------|------------|--------|
 | [United Rentals](united-rentals/) | Equipment Rental | Federated Data Platform, Account Consolidation, Cortex AI Pipeline, SDLC Bridge | Active |
 | [Healthcare & Life Sciences](hcls/) | HCLS | HIPAA Compliance, PHI Lineage, Patient Entity Resolution, Knowledge Graph Governance, Care Pathways | Active |
+| [Fintech Cross-Border Payments](fintech/) | Fintech/Payments | AML/KYC, Fraud Ring Detection, Sanctions Screening, Payment Corridor Risk, Agent Governance | Active |
 
 ## Structure Convention
 
@@ -40,9 +41,10 @@ flowchart TB
     CORE --> KG
     CORE --> UR["United Rentals\nEquipment Rental\nFederated Platform,\nCortex AI, SDLC Bridge"]
     CORE --> HCLS["Healthcare & Life Sciences\nHCLS\nHIPAA Compliance,\nKnowledge Graph, Patient 360"]
-    CORE --> F3["Future Demo 3"]
+    CORE --> FIN["Fintech Cross-Border\nPayments\nAML, Fraud Rings,\nSanctions, Agent Governance"]
     KG -.->|"Governance scoring\nfor all demos"| UR
     KG -.->|"PHI detection\nfor HCLS"| HCLS
+    KG -.->|"Fraud ring detection\nfor fintech"| FIN
 ```
 
 Each focused demo references core DCA documentation rather than duplicating it. When the core demo shows "how Dynamic Tables work," the focused demo shows "why Dynamic Tables solve *this customer's* fleet availability problem."
