@@ -6,15 +6,15 @@
 
 | Field | Detail |
 |-------|--------|
-| **Duration** | 3 hours |
+| **Duration** | 4 hours |
 | **Format** | Whiteboard-led workshop with live Knowledge Graph demo, interactive handouts |
-| **Audience** | CMIO, CPO, VP Data/Analytics, Data Engineering, Compliance/Privacy team |
+| **Audience** | CMIO, CNO, CPO, VP Data/Analytics, VP Revenue Cycle, Data Engineering, Compliance/Privacy team |
 
 ## Attendees
 
 **Snowflake**: Enterprise Data Architect (Lead), Account Team, Healthcare Industry SA
 
-**Customer**: Chief Medical Information Officer, Chief Privacy Officer, VP Data & Analytics, Data Engineering Lead, Compliance/Privacy Team, Clinical Informatics Lead
+**Customer**: Chief Medical Information Officer, Chief Nursing Officer, Chief Privacy Officer, VP Data & Analytics, VP Revenue Cycle / Payer Relations, Data Engineering Lead, Compliance/Privacy Team, Clinical Informatics Lead
 
 ## HCLS Pain Points — Workshop Coverage Map
 
@@ -38,6 +38,14 @@ Every pain point raised in discovery must land in a specific workshop moment. Th
 | DCA Knowledge Graph Overview (1-pager) | Snowflake | Context on graph-based governance approach |
 | HCLS Pain Point Worksheet (printed) | Snowflake | One per attendee — 5 pain points with blank "current cost" and "target state" columns |
 | HIPAA Compliance Scoring Rubric (printed) | Snowflake | Shows the 5-dimension scoring model |
+| Current nurse-to-patient ratios by unit type | Customer | Informs staffing-outcomes analysis in Segment 6 |
+| Trailing 12-month RN turnover data | Customer | Benchmarking against industry in Segment 6 |
+| Top 3 payer denial rates (by payer name) | Customer | Informs payer intelligence discussion in Segment 7 |
+| Confirm Workday or equivalent HCM system availability | Customer | Required for staffing data mapping |
+| Printed STAFFING_OUTCOMES.md reference | Snowflake | One per attendee — staffing correlation benchmarks |
+| Printed COMORBIDITY_PAYER.md reference | Snowflake | One per attendee — CCI tier definitions and payer patterns |
+| CCI mapping table (printed) | Snowflake | Charlson Comorbidity Index condition weights |
+| Denial reason code reference sheet | Snowflake | Top 20 denial codes with descriptions |
 
 ## Agenda at a Glance
 
@@ -49,7 +57,10 @@ Every pain point raised in discovery must land in a specific workshop moment. Th
 | 1:30 | **Segment 3** — The Proof: Live Knowledge Graph Demo | 45 min |
 | 2:15 | **Segment 4** — The Path: 30/60/90 HCLS Roadmap | 30 min |
 | 2:45 | **Segment 5** — Working Discussion: Pilot Selection | 15 min |
-| 3:00 | CLOSE | — |
+| 3:00 | BREAK | 10 min |
+| 3:10 | **Segment 6** — Staffing-Outcomes Intelligence | 35 min |
+| 3:45 | **Segment 7** — Comorbidity & Payer Intelligence | 35 min |
+| 4:20 | CLOSE | — |
 
 ---
 
@@ -425,6 +436,273 @@ Ask the room:
 
 ---
 
+## BREAK (10 min)
+
+---
+
+## Segment 6 — Staffing-Outcomes Intelligence
+
+**Time**: 3:10 - 3:45 (35 minutes)
+
+**Objective**: Demonstrate how cross-system analytics (Workday + FHIR) reveals staffing-outcome correlations that no single system can surface independently.
+
+**Setup**:
+- Whiteboard: Draw the join path diagram (Workday Shifts → Departments → Organizations → FHIR Encounters)
+- Pull up `HCLS_STAFFING_OUTCOME_METRICS` table in Snowflake UI
+
+### 3:10-3:15 | Concept Introduction (5 min)
+
+**Talk Track**:
+> "Traditional approaches analyze staffing and outcomes in silos. HR sees turnover. Quality sees readmissions. Nobody connects them. The Knowledge Graph does."
+>
+> "We've ingested Workday HCM data — shifts, assignments, certifications, overtime — and linked it to FHIR encounters through the organizational hierarchy. The graph's INFLUENCED_BY edges represent statistically validated correlations between staffing features and patient outcomes."
+
+**Whiteboard — INFLUENCED_BY Edge Pattern**:
+
+```
+┌──────────────────┐    INFLUENCED_BY    ┌──────────────────┐
+│  STAFFING_CONTEXT │──────────────────→  │  PATIENT_OUTCOME │
+│  Nurse Ratio: 1:6 │   r=0.68           │  Readmission: Y  │
+│  Unit: ICU         │                    │  30-day return    │
+│  Overtime: 18%     │                    │                   │
+└──────────────────┘                     └──────────────────┘
+```
+
+### 3:15-3:25 | Live Demo: Staffing Context (10 min)
+
+**Query 1 — Unit-level staffing at shift granularity**:
+
+```sql
+-- Show staffing context: unit-level nurse ratios and overtime
+SELECT
+    unit_type,
+    department_name,
+    ROUND(AVG(actual_ratio), 1) AS avg_nurse_ratio,
+    ROUND(AVG(target_nurse_ratio), 1) AS target_ratio,
+    ROUND(AVG(actual_ratio) / NULLIF(AVG(target_nurse_ratio), 0) * 100, 0) AS pct_of_target,
+    ROUND(AVG(overtime_pct) * 100, 1) AS overtime_pct,
+    COUNT(DISTINCT shift_date) AS shifts_observed
+FROM DCA_DEMO.GOVERNANCE.HCLS_STAFFING_CONTEXT
+GROUP BY 1, 2
+ORDER BY pct_of_target DESC;
+```
+
+**Talk Track**:
+> "This is unit-level staffing at shift granularity. Look at the ICU — actual ratio 1:3 vs target 1:2. That unit is 50% over target. Every shift at that ratio increases mortality risk by 7% according to the Aiken research."
+
+**Query 2 — Overtime trending**:
+
+```sql
+-- Overtime trending over 3 months
+SELECT
+    DATE_TRUNC('week', shift_date) AS week,
+    unit_type,
+    ROUND(AVG(overtime_pct) * 100, 1) AS overtime_pct,
+    COUNT(DISTINCT worker_id) AS unique_nurses
+FROM DCA_DEMO.GOVERNANCE.HCLS_STAFFING_CONTEXT
+WHERE shift_date >= DATEADD('month', -3, CURRENT_DATE())
+GROUP BY 1, 2
+ORDER BY 1, 2;
+```
+
+> "Overtime trending up over 3 months. This isn't a one-time staffing crunch — it's a structural problem. And we can now correlate it directly with patient outcomes."
+
+### 3:25-3:35 | Live Demo: Correlation Results (10 min)
+
+```sql
+-- Staffing-outcome Pearson correlations
+SELECT
+    staffing_feature,
+    outcome_measure,
+    ROUND(correlation_coefficient, 3) AS pearson_r,
+    sample_size,
+    CASE
+        WHEN ABS(correlation_coefficient) >= 0.7 THEN 'STRONG'
+        WHEN ABS(correlation_coefficient) >= 0.4 THEN 'MODERATE'
+        ELSE 'WEAK'
+    END AS strength
+FROM DCA_DEMO.GOVERNANCE.HCLS_CORRELATION_RESULTS
+ORDER BY ABS(correlation_coefficient) DESC;
+```
+
+**Talk Track**:
+> "Nurse ratio correlates at r=0.68 with readmission rate. That's statistically significant and actionable. This isn't just 'staffing is bad' — it quantifies HOW MUCH worse each ratio point makes outcomes."
+>
+> "Compare to the Aiken et al. literature: they found r=0.65-0.72 in a 168-hospital study. Our data is consistent with published research — which validates the model AND gives you confidence to act on it."
+
+**Key Knowledge Graph query**:
+
+```sql
+-- Which encounters were influenced by understaffing?
+SELECT e.edge_type, n1.display_name AS encounter, n2.display_name AS staffing_context,
+       e.properties:correlation_strength::FLOAT AS correlation
+FROM DCA_DEMO.GOVERNANCE.ONTOLOGY_GRAPH_EDGES e
+JOIN DCA_DEMO.GOVERNANCE.ONTOLOGY_GRAPH_NODES n1 ON e.source_node_id = n1.node_id
+JOIN DCA_DEMO.GOVERNANCE.ONTOLOGY_GRAPH_NODES n2 ON e.target_node_id = n2.node_id
+WHERE e.edge_type = 'INFLUENCED_BY'
+ORDER BY correlation DESC
+LIMIT 10;
+```
+
+> "The Knowledge Graph made this connection automatically. Traditional BI would require manually joining 5+ tables across two systems."
+
+### 3:35-3:45 | Discussion: Customer's Staffing Data (10 min)
+
+**Facilitation prompts**:
+
+| Question | What You're Looking For |
+|----------|------------------------|
+| "Do you have this data accessible? What HR/workforce system do you use?" | Workday, Kronos, API Health, or homegrown — determines integration path |
+| "Can you tell me your current nurse-to-patient ratios by unit?" | Validates whether they track this at all; compare to benchmarks |
+| "What's your RN turnover rate trailing 12 months?" | National avg is 22.5%; anything above 18% is actionable |
+| "Do you track overtime at the shift level?" | Many orgs only track at pay period level — shift-level needed for correlation |
+
+**Whiteboard**: Map their data sources to our ontology model. Draw edges from their systems to the Knowledge Graph node types.
+
+**Materials**: Printed STAFFING_OUTCOMES.md for reference, benchmark targets table
+
+---
+
+## Segment 7 — Comorbidity & Payer Intelligence
+
+**Time**: 3:45 - 4:20 (35 minutes)
+
+**Objective**: Show how comorbidity stratification reveals payer behavior patterns and informs revenue cycle strategy.
+
+### 3:45-3:50 | Concept Introduction (5 min)
+
+**Talk Track**:
+> "The Charlson Comorbidity Index has been the gold standard in clinical research for 30 years. We're applying it to payer analytics — stratifying denial rates, prior auth friction, and plan-of-care gaps by patient complexity."
+>
+> "The insight is counterintuitive: sicker patients face MORE administrative friction, not less. Understanding this pattern by payer and by CCI tier transforms revenue cycle strategy."
+
+**CCI Tier Definitions** (write on whiteboard):
+
+| Tier | CCI Score | Typical Profile | Expected Cost Multiplier |
+|------|-----------|----------------|------------------------|
+| LOW | 0-1 | Healthy, single acute event | 1.0x |
+| MODERATE | 2-3 | 2-3 chronic conditions | 2.5x |
+| HIGH | 4-6 | Multi-morbid, polypharmacy | 7x |
+| SEVERE | 7+ | Complex, frequent utilizer | 18x |
+
+### 3:50-4:00 | Live Demo: Comorbidity Landscape (10 min)
+
+**Query 1 — CCI distribution**:
+
+```sql
+-- Comorbidity tier distribution and impact
+SELECT
+    cci_tier,
+    COUNT(DISTINCT patient_id) AS patient_count,
+    ROUND(AVG(cci_score), 1) AS avg_score,
+    ROUND(COUNT(DISTINCT patient_id)::FLOAT /
+        (SELECT COUNT(DISTINCT patient_id) FROM DCA_DEMO.GOVERNANCE.HCLS_PATIENT_COMORBIDITY) * 100, 1
+    ) AS pct_of_population,
+    contributing_conditions_top3
+FROM DCA_DEMO.GOVERNANCE.HCLS_PATIENT_COMORBIDITY
+GROUP BY 1, 5
+ORDER BY CASE cci_tier
+    WHEN 'LOW' THEN 1 WHEN 'MODERATE' THEN 2
+    WHEN 'HIGH' THEN 3 WHEN 'SEVERE' THEN 4
+END;
+```
+
+**Talk Track**:
+> "Your SEVERE tier (CCI 7+) is only 8% of patients but drives 35% of total cost. This is where population health and payer negotiations intersect."
+
+**Query 2 — Top co-occurring condition pairs**:
+
+```sql
+-- Most common comorbidity pairs
+SELECT condition_a_desc, condition_b_desc, shared_patient_count,
+       ROUND(co_occurrence_rate * 100, 1) AS co_occurrence_pct
+FROM DCA_DEMO.GOVERNANCE.HCLS_COMORBIDITY_PAIRS
+ORDER BY shared_patient_count DESC
+LIMIT 10;
+```
+
+> "Diabetes + Hypertension appears in the largest cluster. These aren't just clinical trivia — they predict which patients will consume the most resources and face the most payer friction."
+
+**Knowledge Graph traversal** — show COMORBID_WITH edges:
+
+```sql
+-- Comorbidity clusters in the Knowledge Graph
+SELECT n1.display_name AS condition_a, n2.display_name AS condition_b,
+       e.weight AS co_occurrence_strength
+FROM DCA_DEMO.GOVERNANCE.ONTOLOGY_GRAPH_EDGES e
+JOIN DCA_DEMO.GOVERNANCE.ONTOLOGY_GRAPH_NODES n1 ON e.source_node_id = n1.node_id
+JOIN DCA_DEMO.GOVERNANCE.ONTOLOGY_GRAPH_NODES n2 ON e.target_node_id = n2.node_id
+WHERE e.edge_type = 'COMORBID_WITH'
+ORDER BY e.weight DESC
+LIMIT 10;
+```
+
+### 4:00-4:10 | Live Demo: Payer Response Patterns (10 min)
+
+**Query 1 — Denial rates by CCI tier and payer**:
+
+```sql
+-- Payer denial patterns by comorbidity
+SELECT cci_tier, payer_name,
+       ROUND(denial_rate * 100, 1) AS denial_pct,
+       ROUND(avg_adjudication_days, 0) AS days_to_decide,
+       ROUND(prior_auth_rate * 100, 1) AS prior_auth_pct,
+       total_claims
+FROM DCA_DEMO.GOVERNANCE.HCLS_PAYER_METRICS
+WHERE total_claims > 100
+ORDER BY cci_tier, denial_rate DESC;
+```
+
+**Talk Track**:
+> "Look at the SEVERE tier — [payer X] denies [Y]% of claims and takes [Z] days to adjudicate. That's a revenue cycle problem hiding in comorbidity data that only the Knowledge Graph connects."
+>
+> "Key insight: your sickest patients face the most administrative friction. The 28% denial rate at $78K average — that's $X million in underpayment risk for this payer alone."
+
+**Query 2 — Plan of care gaps (approved vs actual)**:
+
+```sql
+-- Care plan gaps: Where payers approve less than clinical need
+SELECT cci_tier, payer_name,
+       ROUND(AVG(approved_days), 1) AS avg_approved,
+       ROUND(AVG(actual_days), 1) AS avg_actual,
+       ROUND(AVG(variance_days), 1) AS avg_gap,
+       ROUND(SUM(CASE WHEN readmitted_30day THEN 1 ELSE 0 END)::FLOAT /
+             NULLIF(COUNT(*), 0) * 100, 1) AS readmit_pct_early_discharge
+FROM DCA_DEMO.GOVERNANCE.HCLS_CARE_GAPS
+WHERE gap_type = 'EARLY_DISCHARGE'
+GROUP BY 1, 2
+ORDER BY avg_gap DESC;
+```
+
+> "Patients discharged before payer-approved end date have a [X]% readmission rate for SEVERE comorbidity vs [Y]% for those held to clinical need. Sending patients home too early costs more than the extended stay. This is the data you bring to payer negotiations."
+
+### 4:10-4:20 | Discussion: Revenue Cycle Application (10 min)
+
+**Facilitation prompts**:
+
+| Question | What You're Looking For |
+|----------|------------------------|
+| "What's your current denial rate by payer? Do you stratify by patient complexity?" | Most don't stratify by CCI — this is the gap |
+| "How do you prioritize prior auth requests?" | Usually FIFO; should be by CCI tier and payer pattern |
+| "Can you quantify the cost of prior auth delays?" | Few can; the graph provides this visibility |
+| "Which payer relationships would benefit most from this analysis?" | Identify top 3 payers to analyze first |
+
+**Whiteboard**: Map their payer contracts to our analytical framework. Identify top 3 payer relationships to analyze first.
+
+**Q&A for Segments 6-7**:
+
+| Question | Response |
+|----------|----------|
+| "Is the CCI calculated in real-time?" | Yes, `SP_HCLS_COMORBIDITY_INDEX()` refreshes on each graph run |
+| "How does this compare to CMS risk adjustment?" | CCI is one input; HCC risk adjustment is complementary but uses different grouper logic |
+| "Can we share this with payers?" | Yes, de-identified via the Knowledge Graph's DE_IDENTIFIED_FROM edge provenance |
+| "How is the correlation computed?" | Pearson coefficient on monthly aggregates, stored in HCLS_CORRELATION_RESULTS |
+| "Can we use this for predictive staffing?" | Yes, the time-series data enables forecasting models |
+
+**Materials**: Printed COMORBIDITY_PAYER.md, CCI mapping table, denial reason code reference
+
+---
+
 ## Post-Workshop Deliverables
 
 | Deliverable | Owner | Timeline |
@@ -435,6 +713,9 @@ Ask the room:
 | Streamlit dashboard demo environment (available for customer exploration) | Snowflake | Same day |
 | Finalized 30/60/90 Roadmap with customer-specific systems and owners | Joint | 5 business days |
 | Pilot kick-off meeting | Joint | Within 1 week |
+| Staffing-outcome correlation analysis plan (which units to analyze first) | Joint | 5 business days |
+| Payer stratification roadmap (which contracts to focus on) | Joint | 5 business days |
+| Comorbidity risk model proposal (CCI implementation plan) | Snowflake | 5 business days |
 
 ## Materials Checklist
 
@@ -442,9 +723,16 @@ Ask the room:
 - [ ] Printed HCLS Pain Point Worksheets (one per attendee — 5 pain points with blank columns)
 - [ ] Printed HIPAA Compliance Scoring Rubric (one per attendee — shows 5-dimension model)
 - [ ] Printed Architecture Diagram (one per attendee — three-layer graph model)
+- [ ] Printed STAFFING_OUTCOMES.md (one per attendee — staffing correlation benchmarks)
+- [ ] Printed COMORBIDITY_PAYER.md (one per attendee — CCI tiers and payer patterns)
+- [ ] Printed CCI Mapping Table (Charlson condition weights)
+- [ ] Printed Denial Reason Code Reference (top 20 codes)
 - [ ] Laptop with Knowledge Graph demo ready:
   - [ ] Snowflake UI open to `DCA_DEMO.GOVERNANCE` schema
-  - [ ] SQL worksheet with Demo 1-5 queries pre-loaded
+  - [ ] SQL worksheet with Demo 1-5 queries pre-loaded (Segments 1-5)
+  - [ ] SQL worksheet with Segment 6-7 queries pre-loaded (staffing, comorbidity, payer)
+  - [ ] Workday and Payer data generators run and loaded
+  - [ ] Scripts 04-07 deployed (`SP_HCLS_MASTER_ORCHESTRATOR()` run successfully)
   - [ ] Streamlit app running (verify Knowledge Graph page renders)
   - [ ] Snowflake UI tab ready for `ONTOLOGY_GRAPH_RAI_RECOMMENDATIONS` query
   - [ ] Snowflake UI tab ready for `ONTOLOGY_GRAPH_RAI_GOVERNANCE_SCORES` query
@@ -471,3 +759,5 @@ Ask the room:
 - **Segment 2 → 3**: "That's the theory. Let's prove it works with live queries against real clinical data structures."
 - **Segment 3 → 4**: "You've seen it work. The question is: how do we get THIS running against YOUR data?"
 - **Segment 4 → 5**: "The roadmap shows what's possible. Let's pick ONE thing and commit to delivering it in 30 days."
+- **Segment 5 → 6**: "We've committed to a pilot. Now let me show you what's possible when we connect workforce data to clinical outcomes — this is where the CNO gets excited."
+- **Segment 6 → 7**: "Staffing affects outcomes. But comorbidity affects EVERYTHING — cost, LOS, denial rates, readmissions. Let me show you how payers respond differently to patient complexity."
