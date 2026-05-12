@@ -79,11 +79,65 @@ Run the remediation SP (or show the Remediation History section if pre-run):
 
 ## Part 2: Pipeline Automation (40 min)
 
-### Minute 20-30: Generate a Pipeline from a Prompt
+### Minute 20-30: AI Builds the Entire Stack from Source Data
 
-Open Cortex Code.
+Open Cortex Code. Show the raw CSV files in the data directory.
 
-> "Surekha, your Question A was about automating pipelines end to end. Let me show you what that looks like."
+> "Surekha, your Question A was about automating pipelines end to end. Let me start from the beginning. These are CSV files — raw exports from your payment processing, KYC, and compliance systems. No schemas defined. No pipeline code written. Just flat files."
+
+**Step 1: AI creates the RAW layer**
+
+Type the prompt:
+
+> "I have CSV source files for a cross-border payment platform: transactions, customers, beneficiaries, corridors, agents, watchlist entities, SARs, and devices. Create the RAW layer — infer schemas from these files, create tables, and load the data with appropriate metadata columns (_LOADED_AT, _SOURCE_SYSTEM)."
+
+Watch Cortex Code generate:
+1. Schema creation DDL (RAW_DEV.WU_PAYMENTS, WU_KYC, WU_COMPLIANCE)
+2. File format definitions
+3. INFER_SCHEMA calls for each CSV
+4. CREATE TABLE statements with inferred columns
+5. COPY INTO statements with metadata enrichment
+
+> "No data engineer wrote this. The AI examined the source files, inferred the types, separated concerns into three schemas, and produced production-grade DDL. This is your raw layer — source-aligned, append-only, timestamped."
+
+**Step 2: AI creates the CURATED layer**
+
+Type the next prompt:
+
+> "Now build the curated layer. Create Dynamic Tables that transform these raw tables into clean dimensions and facts. Use proper naming (DIM_CUSTOMER, FACT_TRANSACTIONS). Apply appropriate TARGET_LAG — 1 minute for transactions, 1 hour for dimensions. Filter for current records."
+
+Watch Cortex Code generate:
+1. Dynamic Table DDL for DIM_CUSTOMER, DIM_BENEFICIARY, DIM_AGENT, DIM_CORRIDOR
+2. Dynamic Table DDL for FACT_TRANSACTIONS, FACT_SARS
+3. TARGET_LAG settings per table type
+4. Business-friendly column renaming
+5. Type casting and null handling
+
+> "The curated layer writes itself. Dynamic Tables handle the refresh — no Airflow, no scheduler, no manual ETL. You set the freshness target, Snowflake handles the rest."
+
+**Step 3: AI creates the SEMANTIC layer**
+
+Type the final prompt:
+
+> "Build semantic views on top of the curated layer for Cortex Analyst. Create views for: transaction volume by corridor, customer risk profiles, agent compliance scorecards, and corridor risk heatmaps. Include joins across schemas. Make them queryable in natural language."
+
+Watch Cortex Code generate:
+1. Four semantic views with business-friendly naming
+2. Cross-schema joins (payments + KYC + compliance)
+3. Computed metrics (risk scores, hold rates, SAR rates)
+4. View comments explaining what each answers
+
+> "Three prompts. Three layers. Zero hand-coded pipelines. The AI understood the domain — it knows 'corridor' means a country-to-country pair, it knows 'compliance hold rate' is a ratio. It built the same medallion architecture your team would build manually, but in three minutes instead of three sprints."
+
+**Pause. Let this land.**
+
+> "THIS is the answer to your Question A. The data is visible to Snowflake. Cortex Code has the schema context. You describe what you want in English. It generates production-grade SQL following YOUR conventions — not a prototype, not pseudocode, real deployable artifacts."
+
+---
+
+### Minute 30-35: Extend the Stack from a New Requirement
+
+> "Now let's do what would normally be a new JIRA ticket and a two-week sprint."
 
 Type the prompt:
 
@@ -95,9 +149,9 @@ Watch Cortex Code generate:
 3. A DMF for freshness monitoring
 4. A semantic view exposing the metric
 
-> "Everything you see is real SQL. It references the tables from Part 1. The contract rules are WU-specific. This isn't a template -- it's generated from your schema context."
+> "A new analytical pipeline — from requirement to deployable artifact in 60 seconds. The contract rules are WU-specific. The DMF monitors freshness automatically. This isn't a template — it's generated from your schema context."
 
-### Minute 30-40: Review and Deploy
+### Minute 35-45: Review and Deploy
 
 Review the generated artifacts with the audience:
 
@@ -112,7 +166,7 @@ Deploy to the dev environment:
 -- (Cortex Code can do this directly, or copy-paste into a worksheet)
 ```
 
-### Minute 40-50: Validate and Test
+### Minute 45-50: Validate and Test
 
 Run contract validation:
 
@@ -142,15 +196,15 @@ Modify the contract threshold. Run validation again. It fails.
 
 > "Let me summarize what just happened."
 
-> "We started with governed data -- medallion architecture, contracts, masking, row-level security. That was 8 SQL scripts and a data generator."
+> "We started with CSV files. Flat files from three source systems. No schemas, no pipelines, no governance. In three prompts, AI built the entire medallion architecture — RAW, CURATED, SEMANTIC — regardless of source system format."
 
-> "We queried it in English. Three different roles got three different answers from the same query. Zero application logic."
+> "We queried the result in English. Three different roles got three different answers from the same query. Zero application logic — governance policies do the work."
 
-> "We monitored it with DMFs. When quality drifted, Cortex AI fixed it automatically. No ticket, no manual intervention."
+> "We monitored quality with DMFs. When data drifted, Cortex AI fixed it automatically. No ticket, no engineer paged, no manual lookup table."
 
-> "Then we generated a new pipeline from a sentence. Real SQL, not a prototype. We validated it against contracts. We deployed it through SDLC gates."
+> "Then we extended the platform with a new requirement — from English sentence to deployed pipeline in 60 seconds. Contract gates prevent bad code from reaching production."
 
-> "This isn't a product demo. Your team just saw production-grade artifacts generated from a prompt, validated against contracts, and deployed through your SDLC. The question isn't whether Snowflake can do this. The question is which pipeline your team wants to build first."
+> "This is not a product demo. Your team just watched AI build a governed data platform from source files, enforce quality automatically, and extend the platform from natural language. The question isn't whether Snowflake can do this. The question is which source system your team wants to onboard first."
 
 ---
 
