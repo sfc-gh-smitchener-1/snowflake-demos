@@ -1,0 +1,9 @@
+# Customer-confidential engagement material — never commit
+genentech/
+
+# OS files
+.DS_Store
+
+# Python caches
+__pycache__/
+*.py[cod]
