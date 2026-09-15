@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="snowflake-source" content="cortex-agent-authored" />
+  <title>Sutter Health — Healthcare Data Platform Architecture</title>
+  <script type="application/json" id="snowflake-report-metadata">
+  {
+    "generated": "2026-09-15",
+    "intent": "Before/after architecture diagram for Sutter Health healthcare data platform demo",
+    "sections": [
+      {
+        "id": "architecture-diagram",
+        "title": "Before / After Architecture",
+        "dataSources": [{ "type": "static", "description": "Illustrative architecture diagram — no live data queries" }],
+        "producerNotes": "Two-panel SVG diagram. BEFORE: Epic Clarity → Milliman (manual) → SQL Server → BI tools. AFTER: Epic Clarity → Snowflake streaming → Cortex AI + Semantic Layer → BI tools."
+      }
+    ]
+  }
+  </script>
+  <style>
+    :root { color-scheme: light dark; }
+
+    * { box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, system-ui, 'Segoe UI', sans-serif;
+      max-width: 1100px;
+      width: 100%;
+      margin: 0 auto;
+      padding: clamp(16px, 4vw, 32px);
+      background: light-dark(#f8fafc, #0f172a);
+      color: light-dark(#1e293b, #e2e8f0);
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 32px;
+    }
+
+    .logo-bar {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      margin-bottom: 8px;
+    }
+
+    .logo-mark {
+      width: 36px; height: 36px;
+      background: linear-gradient(135deg, #00B9FF 0%, #0068D6 100%);
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+    }
+
+    .logo-mark svg { width: 22px; height: 22px; fill: white; }
+
+    h1 {
+      font-size: clamp(1.4rem, 3vw, 2rem);
+      font-weight: 700;
+      color: light-dark(#0f172a, #f8fafc);
+      margin: 0 0 4px;
+    }
+
+    .subtitle {
+      font-size: 0.95rem;
+      color: light-dark(#64748b, #94a3b8);
+      margin: 0;
+    }
+
+    /* Two-panel layout */
+    .panels {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      margin-bottom: 28px;
+    }
+
+    @media (max-width: 700px) {
+      .panels { grid-template-columns: 1fr; }
+    }
+
+    .panel {
+      border-radius: 14px;
+      padding: 20px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .panel-before {
+      background: light-dark(#fff7ed, #1c1108);
+      border: 1.5px solid light-dark(#fdba74, #7c3f00);
+    }
+
+    .panel-after {
+      background: light-dark(#eff6ff, #091428);
+      border: 1.5px solid light-dark(#93c5fd, #1e40af);
+    }
+
+    .panel-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      padding: 4px 10px;
+      border-radius: 20px;
+      margin-bottom: 12px;
+    }
+
+    .badge-before {
+      background: light-dark(#fed7aa, #431407);
+      color: light-dark(#9a3412, #fdba74);
+    }
+
+    .badge-after {
+      background: light-dark(#bfdbfe, #1e3a5f);
+      color: light-dark(#1d4ed8, #93c5fd);
+    }
+
+    .panel-title {
+      font-size: 1rem;
+      font-weight: 600;
+      margin: 0 0 4px;
+      color: light-dark(#1e293b, #f1f5f9);
+    }
+
+    .panel-subtitle {
+      font-size: 0.78rem;
+      color: light-dark(#78716c, #a8a29e);
+      margin: 0 0 16px;
+    }
+
+    /* Architecture flow boxes */
+    .arch-flow {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      align-items: center;
+    }
+
+    .arch-node {
+      width: 100%;
+      border-radius: 10px;
+      padding: 10px 14px;
+      text-align: center;
+      position: relative;
+    }
+
+    .arch-node .node-icon {
+      font-size: 1.3rem;
+      display: block;
+      margin-bottom: 2px;
+    }
+
+    .arch-node .node-title {
+      font-weight: 600;
+      font-size: 0.85rem;
+      display: block;
+    }
+
+    .arch-node .node-sub {
+      font-size: 0.72rem;
+      opacity: 0.75;
+      display: block;
+      margin-top: 1px;
+    }
+
+    /* Node colour variants */
+    .node-source {
+      background: light-dark(#f0fdf4, #052e16);
+      border: 1px solid light-dark(#86efac, #166534);
+      color: light-dark(#14532d, #86efac);
+    }
+
+    .node-legacy {
+      background: light-dark(#fef3c7, #18100a);
+      border: 1px solid light-dark(#fcd34d, #92400e);
+      color: light-dark(#92400e, #fcd34d);
+    }
+
+    .node-db {
+      background: light-dark(#f3f4f6, #1f2937);
+      border: 1px solid light-dark(#9ca3af, #374151);
+      color: light-dark(#374151, #d1d5db);
+    }
+
+    .node-bi {
+      background: light-dark(#fdf4ff, #1b0a25);
+      border: 1px solid light-dark(#d8b4fe, #7e22ce);
+      color: light-dark(#6b21a8, #d8b4fe);
+    }
+
+    .node-snowflake {
+      background: linear-gradient(135deg, #dbeafe, #eff6ff);
+      border: 2px solid #3b82f6;
+      color: #1d4ed8;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      .node-snowflake {
+        background: linear-gradient(135deg, #1e3a5f, #0f2340);
+        border-color: #60a5fa;
+        color: #93c5fd;
+      }
+    }
+
+    .node-cortex {
+      background: linear-gradient(135deg, #ede9fe, #f5f3ff);
+      border: 2px solid #7c3aed;
+      color: #5b21b6;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      .node-cortex {
+        background: linear-gradient(135deg, #2e1065, #1e0d40);
+        border-color: #a78bfa;
+        color: #c4b5fd;
+      }
+    }
+
+    /* Arrow connector */
+    .arch-arrow {
+      width: 2px;
+      height: 22px;
+      margin: 0 auto;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    .arch-arrow .arrow-line {
+      flex: 1;
+      width: 2px;
+      background: light-dark(#94a3b8, #475569);
+    }
+
+    .arch-arrow .arrow-label {
+      font-size: 0.64rem;
+      color: light-dark(#64748b, #64748b);
+      white-space: nowrap;
+      position: absolute;
+      left: 10px;
+      top: 3px;
+    }
+
+    .arch-arrow .arrowhead {
+      width: 0; height: 0;
+      border-left: 5px solid transparent;
+      border-right: 5px solid transparent;
+      border-top: 8px solid light-dark(#94a3b8, #475569);
+    }
+
+    /* Warning badge */
+    .warn-badge {
+      display: inline-block;
+      background: light-dark(#fee2e2, #450a0a);
+      color: light-dark(#dc2626, #fca5a5);
+      border-radius: 4px;
+      font-size: 0.65rem;
+      font-weight: 700;
+      padding: 1px 5px;
+      margin-left: 4px;
+      vertical-align: middle;
+    }
+
+    /* Latency callout */
+    .latency-bar {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 10px 16px;
+      border-radius: 8px;
+      margin-top: 14px;
+      font-size: 0.82rem;
+      font-weight: 600;
+    }
+
+    .latency-before {
+      background: light-dark(#fee2e2, #3f0707);
+      color: light-dark(#b91c1c, #fca5a5);
+      border: 1px solid light-dark(#fca5a5, #7f1d1d);
+    }
+
+    .latency-after {
+      background: light-dark(#dcfce7, #052e16);
+      color: light-dark(#15803d, #86efac);
+      border: 1px solid light-dark(#86efac, #166534);
+    }
+
+    .latency-icon { font-size: 1.1rem; }
+
+    /* Comparison table */
+    .compare-section {
+      margin-top: 8px;
+    }
+
+    .compare-section h2 {
+      font-size: 1.05rem;
+      font-weight: 700;
+      margin: 0 0 12px;
+      color: light-dark(#0f172a, #f8fafc);
+    }
+
+    .table-wrap { overflow-x: auto; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.82rem;
+    }
+
+    thead th {
+      background: light-dark(#1e40af, #1e3a5f);
+      color: white;
+      padding: 8px 12px;
+      text-align: left;
+      font-weight: 600;
+    }
+
+    thead th:first-child { border-radius: 6px 0 0 0; }
+    thead th:last-child  { border-radius: 0 6px 0 0; }
+
+    tbody tr:nth-child(even) {
+      background: light-dark(#f8fafc, #1e293b);
+    }
+
+    tbody td {
+      padding: 7px 12px;
+      border-bottom: 1px solid light-dark(#e2e8f0, #334155);
+      color: light-dark(#334155, #cbd5e1);
+    }
+
+    .check { color: #22c55e; font-weight: 700; }
+    .cross { color: #ef4444; font-weight: 700; }
+
+    footer {
+      text-align: center;
+      font-size: 0.72rem;
+      color: light-dark(#94a3b8, #64748b);
+      margin-top: 28px;
+      padding-top: 16px;
+      border-top: 1px solid light-dark(#e2e8f0, #1e293b);
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="logo-bar">
+      <div class="logo-mark">
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+          <path d="M12 2L3 7v10l9 5 9-5V7L12 2zm0 2.18l7 3.89v7.86l-7 3.89-7-3.89V8.07l7-3.89z"/>
+        </svg>
+      </div>
+      <h1>Sutter Health — Healthcare Data Platform</h1>
+    </div>
+    <p class="subtitle">Architecture Modernization: Legacy Stack → Snowflake + Cortex AI</p>
+  </header>
+
+  <!-- Two-panel architecture diagram -->
+  <div class="panels">
+
+    <!-- BEFORE panel -->
+    <div class="panel panel-before">
+      <span class="panel-badge badge-before">&#9888; Before</span>
+      <p class="panel-title">Legacy Architecture</p>
+      <p class="panel-subtitle">Manual batch processing · 24–72hr data latency · 3rd-party risk vendor dependency</p>
+
+      <div class="arch-flow">
+
+        <div class="arch-node node-source">
+          <span class="node-icon">🏥</span>
+          <span class="node-title">Epic Clarity</span>
+          <span class="node-sub">Claims &amp; clinical source system</span>
+        </div>
+
+        <div class="arch-arrow">
+          <div class="arrow-line"></div>
+          <span class="arrow-label">nightly export</span>
+          <div class="arrowhead"></div>
+        </div>
+
+        <div class="arch-node node-legacy">
+          <span class="node-icon">📋</span>
+          <span class="node-title">Milliman</span>
+          <span class="node-sub">3rd-party risk vendor <span class="warn-badge">MANUAL</span></span>
+        </div>
+
+        <div class="arch-arrow">
+          <div class="arrow-line"></div>
+          <span class="arrow-label">manual upload</span>
+          <div class="arrowhead"></div>
+        </div>
+
+        <div class="arch-node node-db">
+          <span class="node-icon">🗄️</span>
+          <span class="node-title">SQL Server</span>
+          <span class="node-sub">On-premise data warehouse</span>
+        </div>
+
+        <div class="arch-arrow">
+          <div class="arrow-line"></div>
+          <span class="arrow-label">batch ETL</span>
+          <div class="arrowhead"></div>
+        </div>
+
+        <div class="arch-node node-bi">
+          <span class="node-icon">📊</span>
+          <span class="node-title">Qlik / Power BI</span>
+          <span class="node-sub">Static reports &amp; dashboards</span>
+        </div>
+
+      </div>
+
+      <div class="latency-bar latency-before">
+        <span class="latency-icon">⏱️</span>
+        <span>24–72 hr data latency · No SLA visibility</span>
+      </div>
+    </div>
+
+    <!-- AFTER panel -->
+    <div class="panel panel-after">
+      <span class="panel-badge badge-after">&#10003; After</span>
+      <p class="panel-title">Snowflake + Cortex AI</p>
+      <p class="panel-subtitle">Streaming ingest · Near-real-time · Built-in risk adjustment pipeline</p>
+
+      <div class="arch-flow">
+
+        <div class="arch-node node-source">
+          <span class="node-icon">🏥</span>
+          <span class="node-title">Epic Clarity</span>
+          <span class="node-sub">Claims &amp; clinical source system</span>
+        </div>
+
+        <div class="arch-arrow">
+          <div class="arrow-line"></div>
+          <span class="arrow-label">streaming ingest</span>
+          <div class="arrowhead"></div>
+        </div>
+
+        <div class="arch-node node-snowflake">
+          <span class="node-icon">❄️</span>
+          <span class="node-title">Snowflake</span>
+          <span class="node-sub">Dynamic Tables · SP_RISK_ADJUSTMENT · SLA tracking · RBAC + PHI masking</span>
+        </div>
+
+        <div class="arch-arrow">
+          <div class="arrow-line"></div>
+          <span class="arrow-label">semantic views</span>
+          <div class="arrowhead"></div>
+        </div>
+
+        <div class="arch-node node-cortex">
+          <span class="node-icon">🤖</span>
+          <span class="node-title">Cortex AI + Semantic Layer</span>
+          <span class="node-sub">Natural language queries · Auto risk scores · Cortex Analyst</span>
+        </div>
+
+        <div class="arch-arrow">
+          <div class="arrow-line"></div>
+          <span class="arrow-label">live connection</span>
+          <div class="arrowhead"></div>
+        </div>
+
+        <div class="arch-node node-bi">
+          <span class="node-icon">📊</span>
+          <span class="node-title">Any BI Tool</span>
+          <span class="node-sub">Tableau · Power BI · Streamlit · Cortex Analyst UI</span>
+        </div>
+
+      </div>
+
+      <div class="latency-bar latency-after">
+        <span class="latency-icon">⚡</span>
+        <span>Near-real-time · 24hr SLA tracked automatically</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Comparison table -->
+  <div class="compare-section">
+    <h2>Side-by-Side Comparison</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Capability</th>
+            <th>Before (Legacy)</th>
+            <th>After (Snowflake)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Data latency</td>
+            <td>24–72 hours (nightly batch)</td>
+            <td>Minutes (streaming ingest)</td>
+          </tr>
+          <tr>
+            <td>Risk adjustment</td>
+            <td>Milliman (external, 3–5 business days) <span class="cross">✗</span></td>
+            <td>SP_SH_RISK_ADJUSTMENT_DAILY_RUN — &lt;10 sec on XS <span class="check">✓</span></td>
+          </tr>
+          <tr>
+            <td>SLA tracking</td>
+            <td>Manual spreadsheet, after the fact <span class="cross">✗</span></td>
+            <td>CLAIM_RECEIVED_TS / CLAIM_PROCESSED_TS, real-time <span class="check">✓</span></td>
+          </tr>
+          <tr>
+            <td>Natural language queries</td>
+            <td>None — requires SQL skills <span class="cross">✗</span></td>
+            <td>Cortex Analyst semantic views — plain English <span class="check">✓</span></td>
+          </tr>
+          <tr>
+            <td>PHI governance</td>
+            <td>Manual controls, audit risk <span class="cross">✗</span></td>
+            <td>Column masking, row policies, role hierarchy <span class="check">✓</span></td>
+          </tr>
+          <tr>
+            <td>Pipeline compute cost (30 days)</td>
+            <td>~$216/mo (Databricks always-on cluster)</td>
+            <td>~$1.35/mo (Snowflake XS, auto-suspend) <span class="check">✓</span></td>
+          </tr>
+          <tr>
+            <td>CMS risk submission readiness</td>
+            <td>Manual extract + reformat <span class="cross">✗</span></td>
+            <td>Automated HCC flagging with audit log <span class="check">✓</span></td>
+          </tr>
+          <tr>
+            <td>Scalability</td>
+            <td>Vertical SQL Server scale (expensive) <span class="cross">✗</span></td>
+            <td>Virtual warehouse auto-scale, multi-cluster <span class="check">✓</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <footer>
+    Sutter Health DCA Demo &nbsp;|&nbsp; Snowflake Data Cloud Architecture &nbsp;|&nbsp;
+    Generated for discovery/POC purposes — not based on actual Sutter Health systems.
+  </footer>
+
+</body>
+</html>
